@@ -2,7 +2,7 @@
 {% block title %}Analysis #{{ job.id }} · SecureFix{% endblock %}
 {% block main_class %}page wide{% endblock %}
 {% block content %}
-<div id="job" data-job-id="{{ job.id }}">
+<div id="job" data-job-id="{{ job.id }}" data-can-act="{{ 1 if can_act else 0 }}">
   <header class="job-head">
     <div>
       <p class="sub"><a href="/history">History</a> › Analysis #{{ job.id }}</p>
@@ -18,6 +18,7 @@
       <a id="download-report" class="button" href="/jobs/{{ job.id }}/report.xlsx" download hidden>{{ icon('download') }} Download report (Excel)</a>
     </div>
   </header>
+  {% if not can_act %}<p class="info" role="note"><strong>Read-only:</strong> started by {{ job.user.username }}. You can view the results and download the Excel report. To act on findings, use <em>Run again</em> to start your own analysis.</p>{% endif %}
   <p id="job-progress" class="progress" role="status" aria-live="polite">{{ job.progress }}</p>
   <p id="job-error" class="error" role="alert" hidden></p>
   <div id="summary" class="summary" hidden></div>

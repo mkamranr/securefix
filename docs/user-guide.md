@@ -53,7 +53,22 @@ Every finding shows:
 
 Every action is recorded on the finding with who did it and when.
 
-## 6. Excel report
+## 6. Shared analyses
+**History** has three tabs:
+
+- **Mine**: analyses you started.
+- **Shared with me**: analyses other people ran on projects where you are **Developer or higher** in GitLab. That
+  is the same role GitLab requires to see a project's vulnerabilities. Your role is checked with your own GitLab
+  token, so you need to have saved one.
+- **Everyone** (administrators only): every analysis in the app.
+
+Someone else's analysis opens **read-only**. You can see every result and download the Excel report, but you can't
+post analyses, open fix merge requests, dismiss findings, or cancel or retry the analysis. Only the person who started
+an analysis can do that, and that applies to administrators too. To act on findings yourself, choose **Run again**:
+it starts your own analysis of the same commit. Unchanged findings are copied, and analyses already posted stay
+marked as posted, so nothing is posted twice.
+
+## 7. Excel report
 **Download report (Excel)** is on the analysis page and on each row of the **History** page. The workbook has:
 
 - a **Summary** sheet: project, branch, commit, who ran it, totals per verdict and a severity × verdict table;

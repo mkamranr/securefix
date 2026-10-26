@@ -26,6 +26,9 @@ inside your network and under people's control.
 - Analyzed code is untrusted input to the model. Prompts tell the model to treat it as data. Findings whose context
   contains text addressed to an AI or reviewer are flagged in the UI, so people treat those verdicts with suspicion.
 - Triage runs several independent votes. Any disagreement becomes *Needs review* rather than a guess.
+- Users see other people's analyses only for projects where they are Developer or higher in GitLab (checked with
+  their own token), because GitLab hides vulnerabilities below that role. Those analyses are read-only: only the
+  person who started an analysis can write to GitLab from it.
 - Nothing is dismissed, merged or posted automatically. Every write to GitLab is a person's action, recorded with
   who did it and when.
 - Prompts and raw model responses are stored per finding (`llm_log`) for audit.

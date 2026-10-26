@@ -98,6 +98,12 @@ class GitLabClient:
     def project(self, project_id: int) -> dict:
         return self.get(f"/projects/{project_id}")
 
+    @staticmethod
+    def access_level(project: dict) -> int:
+        """The user's role on a project from GET /projects/:id (30 = Developer); direct or through its group."""
+        perms = project.get("permissions") or {}
+        return max((perms.get(k) or {}).get("access_level") or 0 for k in ("project_access", "group_access"))
+
     def branches(self, project_id: int, search: str = "") -> list[dict]:
         return self.get(f"/projects/{project_id}/repository/branches", search=search, per_page=50)
 

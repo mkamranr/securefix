@@ -681,3 +681,67 @@ def test_retry_failed_findings(client, fake_services, monkeypatch):
     assert low2["status"] == "done" and low2["verdict"] == "false_positive" and low2["error"] is None
     assert calls == [("triage", "low")] * 3
     assert client.post(f"/api/jobs/{job_id}/retry-failed", headers=h).status_code == 409  # nothing left to retry
+
+
+def test_shared_analysis_is_read_only(client, fake_services):
+    """Other users who are Developer or higher on the project can view an analysis and export it, but not act on it."""
+    from app import main
+    from app.analyzer import JobRunner
+    from app.main import app
+    h = {"X-CSRF-Token": csrf(client, "/")}
+    _forget_results()
+    job_id = _new_job(client, h, fake_services)
+    JobRunner(job_id).run()
+    findings = client.get(f"/api/jobs/{job_id}").json()["findings"]
+    real = next(f for f in findings if f["verdict"] == "true_positive")
+    token = csrf(client, "/admin")
+    client.post("/admin/users", data={"username": "dave", "password": "dave's long password", "csrf": token})
+
+    with TestClient(app) as dave:
+        dave.post("/login", data={"username": "dave", "password": "dave's long password", "csrf": csrf(dave, "/login")})
+        assert "Add your GitLab token" in dave.get("/history?scope=shared").text
+        dave.post("/settings/token", data={"token": fake_services.BOB_TOKEN, "token_type": "access_token",
+                                           "csrf": csrf(dave, "/settings")})
+        dh = {"X-CSRF-Token": csrf(dave, "/")}
+        assert f"/jobs/{job_id}\"" not in dave.get("/history").text  # Mine: only dave's own
+        shared = dave.get("/history?scope=shared").text
+        assert f"/jobs/{job_id}\"" in shared and "alice" in shared
+        everyone = dave.get("/history?scope=all").text  # not an admin: back to Mine
+        assert 'aria-current="page">Mine' in everyone and "?scope=all" not in everyone
+        page = dave.get(f"/jobs/{job_id}")
+        assert page.status_code == 200 and "Read-only:" in page.text and 'data-can-act="0"' in page.text
+        assert dave.get(f"/api/jobs/{job_id}").json()["can_act"] is False
+        assert dave.get(f"/jobs/{job_id}/report.xlsx").status_code == 200
+        picked = dave.get("/api/projects/1/commits", params={"ref": "feature/login"}).json()[0]["job"]
+        assert picked and picked["by"] in ("alice", "dave")
+
+        notes = sum(len(i["notes"]) for i in fake_services.gitlab.state["issues"])
+        for path in (f"/api/findings/{real['id']}/note", f"/api/findings/{real['id']}/mr",
+                     f"/api/findings/{real['id']}/dismiss", f"/api/jobs/{job_id}/cancel",
+                     f"/api/jobs/{job_id}/retry-failed"):
+            r = dave.post(path, headers=dh)
+            assert r.status_code == 403 and "Only alice can act" in r.json()["detail"], path
+        assert sum(len(i["notes"]) for i in fake_services.gitlab.state["issues"]) == notes
+
+        # Run again starts dave's own analysis, which he can act on and an admin (alice) can only view.
+        own = dave.post(f"/api/jobs/{job_id}/rerun", headers=dh).json()["id"]
+        assert own != job_id and dave.get(f"/api/jobs/{own}").json()["can_act"] is True
+        assert client.get(f"/api/jobs/{own}").json()["can_act"] is False
+        r = client.post(f"/api/jobs/{own}/cancel", headers=h)
+        assert r.status_code == 403 and "Only dave can act" in r.json()["detail"]
+        assert dave.post(f"/api/jobs/{own}/cancel", headers=dh).json()["status"] == "cancelled"
+        assert f"/jobs/{own}\"" in client.get("/history?scope=all").text
+
+        # Below Developer in GitLab: the analysis is hidden, as GitLab hides the project's vulnerabilities.
+        fake_services.ACCESS[fake_services.BOB_TOKEN] = 20
+        main._access.clear()
+        try:
+            assert dave.get(f"/api/jobs/{job_id}").status_code == 404
+            assert dave.get(f"/jobs/{job_id}/report.xlsx").status_code == 404
+            assert f"/jobs/{job_id}\"" not in dave.get("/history?scope=shared").text
+            assert dave.post(f"/api/findings/{real['id']}/note", headers=dh).status_code == 404
+            picked = dave.get("/api/projects/1/commits", params={"ref": "feature/login"}).json()[0]["job"]
+            assert picked is None or picked["by"] == "dave"  # only his own analyses are shown
+        finally:
+            fake_services.ACCESS[fake_services.BOB_TOKEN] = 30
+            main._access.clear()

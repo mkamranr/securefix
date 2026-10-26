@@ -1,11 +1,12 @@
 (() => {
   const root = document.getElementById('job');
   const jobId = root.dataset.jobId;
+  const canAct = root.dataset.canAct === '1';  // only the user who started the analysis; others view it read-only
   const $ = id => document.getElementById(id);
   const rows = new Map();      // finding id -> {el, sig, f}
   const selected = new Set();  // finding ids picked for posting to GitLab
   let filter = 'all', timer = null, job = null, posting = false;
-  const eligible = f => f.status === 'done' && !f.posted;
+  const eligible = f => canAct && f.status === 'done' && !f.posted;
 
   const VERDICT = {
     true_positive: ['Real', 'v-real'],
@@ -71,7 +72,11 @@
       parts.push(`<details><summary>Code the model saw (${f.context_files.length} excerpts, ${f.context_tokens.toLocaleString()} tokens)</summary><ul class="ctx">${
         f.context_files.map(c => `<li><code>${esc(c.path)}:${c.start}-${c.end}</code> ${esc(c.reason)}</li>`).join('')}</ul></details>`);
     }
-    if (f.status === 'done') {
+    if (f.status === 'done' && !canAct) {
+      const p = f.posted;
+      if (p) parts.push(`<p class="act-msg">Posted${p.issue_iid ? ` on issue #${esc(p.issue_iid)}` : ''} by ${esc(p.by)}, ${esc(when(p.at))}${
+        p.url ? ` (<a href="${esc(p.url)}" target="_blank" rel="noopener">open comment</a>)` : ''}.</p>`);
+    } else if (f.status === 'done') {
       const p = f.posted;
       const btns = [p ? '<button data-act="note" class="done" disabled>Analysis posted ✓</button>'
                       : '<button data-act="note">Post analysis to GitLab issue</button>'];
@@ -103,6 +108,7 @@
       </button>
       <div class="finding-body" id="fd-${f.id}" hidden></div>`;
     const head = el.querySelector('.finding-head'), body = el.querySelector('.finding-body');
+    if (!canAct) el.querySelector('.pick').style.visibility = 'hidden';  // keeps the column, shows no checkbox
     el.querySelector('.pick input').addEventListener('change', e => {
       if (e.target.checked) selected.add(f.id); else selected.delete(f.id);
       updateBulk();
@@ -147,12 +153,13 @@
     const pickable = all.filter(r => !r.el.hidden && eligible(r.f));
     const picked = pickable.filter(r => selected.has(r.f.id)).length, n = selected.size;
     $('ledger-head').hidden = !all.length;
-    $('bulkbar').hidden = !all.some(r => r.f.status === 'done');
+    $('bulkbar').hidden = !canAct || !all.some(r => r.f.status === 'done');
     $('sel-count').textContent = n ? `${n} finding${n === 1 ? '' : 's'} selected` : 'No findings selected';
     $('post-selected').disabled = posting || !n;
     $('post-selected').textContent = n ? `Post ${n} to GitLab issues` : 'Post analysis to GitLab issues';
     $('clear-sel').hidden = posting || !n;
     const pickAll = $('pick-all');
+    if (!canAct) pickAll.closest('.pick').style.visibility = 'hidden';
     pickAll.disabled = posting || !pickable.length;
     pickAll.checked = !!pickable.length && picked === pickable.length;
     pickAll.indeterminate = picked > 0 && picked < pickable.length;
@@ -234,10 +241,10 @@
     st.className = `state state-${j.status}`;
     $('job-progress').textContent = j.status === 'done' ? `Finished ${when(j.finished_at)}.` : j.progress || '';
     $('job-error').hidden = !j.error; $('job-error').textContent = j.error || '';
-    $('cancel').hidden = !['queued', 'running'].includes(j.status);
+    $('cancel').hidden = !canAct || !['queued', 'running'].includes(j.status);
     $('rerun').hidden = ['queued', 'running'].includes(j.status);
     const failed = j.findings.filter(f => f.status === 'error').length;
-    $('retry-failed').hidden = !failed || ['queued', 'running'].includes(j.status);
+    $('retry-failed').hidden = !canAct || !failed || ['queued', 'running'].includes(j.status);
     $('retry-failed').textContent = `Retry ${failed} failed`;
     $('download-report').hidden = !j.findings.length;
     summary(j.findings);

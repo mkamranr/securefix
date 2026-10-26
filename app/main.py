@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
@@ -240,6 +241,7 @@ def save_token(request: Request, token: str = Form(...), token_type: str = Form(
     user.gitlab_token_type = token_type
     user.gitlab_username = me.get("username")
     db.commit()
+    _forget_access(user.id)  # project roles are checked again with the new token
     note = "" if not scopes or "api" in scopes else " It can read but not write back; add the api scope for issues and merge requests."
     return back_to_settings(saved=f"Connected to GitLab as {me.get('username')}.{note}")
 
@@ -250,6 +252,7 @@ def delete_token(request: Request, csrf: str = Form(""), user: User = Depends(cu
     check_csrf(request, csrf)
     user.gitlab_token_enc, user.gitlab_username = None, None
     db.commit()
+    _forget_access(user.id)
     return back_to_settings(saved="Token removed.")
 
 
@@ -452,23 +455,38 @@ def analyze_page(request: Request, user: User = Depends(current_user)):
 
 @app.get("/history", response_class=HTMLResponse)
 def history_page(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db),
-                 all: int = 0):
+                 scope: str = "mine", all: int = 0):
+    """mine: analyses the user started. shared: other users' analyses of projects where the user is at least
+    Developer in GitLab (read-only). all: every analysis (administrators)."""
+    if all:
+        scope = "all"
+    if scope not in ("mine", "shared", "all") or (scope == "all" and not user.is_admin):
+        scope = "mine"
     q = select(AnalysisJob).order_by(AnalysisJob.id.desc()).limit(200)
-    if not (all and user.is_admin):
-        q = q.where(AnalysisJob.user_id == user.id)
-    jobs = db.scalars(q).all()
+    shared_error = ""
+    if scope == "mine":
+        jobs = db.scalars(q.where(AnalysisJob.user_id == user.id)).all()
+    elif scope == "all":
+        jobs = db.scalars(q).all()
+    elif not user.gitlab_token_enc:
+        jobs, shared_error = [], "token"
+    else:
+        others = db.scalars(q.where(AnalysisJob.user_id != user.id)).all()
+        with gitlab_for(user) as gl:  # one GitLab check per project, cached
+            allowed = {pid for pid in {j.project_id for j in others} if _can_view_project(user, pid, gl)}
+        jobs = [j for j in others if j.project_id in allowed]
     counts = {}
     for job_id, verdict, n in db.execute(select(Finding.job_id, Finding.verdict, func.count())
                                          .where(Finding.job_id.in_([j.id for j in jobs]))
                                          .group_by(Finding.job_id, Finding.verdict)):
         counts.setdefault(job_id, {})[verdict or "other"] = n
-    return render(request, "history.html", user, jobs=jobs, counts=counts, show_all=bool(all and user.is_admin))
+    return render(request, "history.html", user, jobs=jobs, counts=counts, scope=scope, shared_error=shared_error)
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_page(job_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     job = _job_for(job_id, user, db)
-    return render(request, "job.html", user, job=job)
+    return render(request, "job.html", user, job=job, can_act=job.user_id == user.id)
 
 
 @app.get("/jobs/{job_id}/report.xlsx")
@@ -529,9 +547,14 @@ def api_commits(pid: int, ref: str, page: int = 1, user: User = Depends(current_
     with gitlab_for(user) as gl:
         commits = gl.commits(pid, ref, page)
     shas = [c["id"] for c in commits]
-    latest = {}
+    latest, others_visible = {}, None
     for job in db.scalars(select(AnalysisJob).where(AnalysisJob.project_id == pid, AnalysisJob.sha.in_(shas))
                           .order_by(AnalysisJob.id)):
+        if job.user_id != user.id and not user.is_admin:  # other users' analyses: only for Developer or higher
+            if others_visible is None:
+                others_visible = _can_view_project(user, pid)
+            if not others_visible:
+                continue
         latest[job.sha] = {"id": job.id, "status": job.status, "by": job.user.username}
     return [{"sha": c["id"], "short": c["short_id"], "title": c["title"], "author": c["author_name"],
              "date": c["committed_date"], "web_url": c.get("web_url"), "job": latest.get(c["id"])} for c in commits]
@@ -558,16 +581,47 @@ class JobIn(BaseModel):
     severities: list[str] = DEFAULT_SEVERITIES
 
 
-def _job_for(job_id: int, user: User, db: Session) -> AnalysisJob:
+DEVELOPER = 30  # GitLab shows a project's vulnerabilities from this role up, so other users' analyses do too
+ACCESS_TTL = 300
+_access: dict[tuple[int, int], tuple[bool, float]] = {}  # (user id, project id) -> (Developer or higher, expiry)
+
+
+def _forget_access(user_id: int):
+    for key in [k for k in _access if k[0] == user_id]:
+        _access.pop(key, None)
+
+
+def _can_view_project(user: User, project_id: int, gl: GitLabClient | None = None) -> bool:
+    """Whether the user is at least Developer on the project in GitLab (cached for a few minutes)."""
+    key, now = (user.id, project_id), time.monotonic()
+    hit = _access.get(key)
+    if hit and hit[1] > now:
+        return hit[0]
+    try:
+        if gl:
+            ok = GitLabClient.access_level(gl.project(project_id)) >= DEVELOPER
+        else:
+            with gitlab_for(user) as own:
+                ok = GitLabClient.access_level(own.project(project_id)) >= DEVELOPER
+    except GitLabError:
+        ok = False
+    _access[key] = (ok, now + ACCESS_TTL)
+    return ok
+
+
+def _job_for(job_id: int, user: User, db: Session, act: bool = False) -> AnalysisJob:
+    """The analysis, if the user may see it: their own, any for administrators, and other users' analyses of projects
+    where they are at least Developer. Only the user who started an analysis can act on it (act=True)."""
     job = db.get(AnalysisJob, job_id)
     if not job:
         raise HTTPException(404, "That analysis doesn't exist.")
-    if job.user_id != user.id and not user.is_admin:
-        with gitlab_for(user) as gl:  # others may view it if GitLab lets them see the project
-            try:
-                gl.project(job.project_id)
-            except GitLabError as exc:
-                raise HTTPException(404, "That analysis doesn't exist.") from exc
+    if job.user_id == user.id:
+        return job
+    if not user.is_admin and not _can_view_project(user, job.project_id):
+        raise HTTPException(404, "That analysis doesn't exist.")
+    if act:
+        raise HTTPException(403, f"Only {job.user.username} can act on this analysis. "
+                                 "You can view it and download the report.")
     return job
 
 
@@ -617,7 +671,8 @@ def get_job(job_id: int, user: User = Depends(current_user), db: Session = Depen
     job = _job_for(job_id, user, db)
     return {"id": job.id, "project_path": job.project_path, "project_id": job.project_id, "branch": job.branch,
             "sha": job.sha, "default_branch": job.default_branch, "status": job.status, "progress": job.progress,
-            "error": job.error, "by": job.user.username, "gitlab_url": settings.gitlab_url,
+            "error": job.error, "by": job.user.username, "can_act": job.user_id == user.id,
+            "gitlab_url": settings.gitlab_url,
             "severities": job.severities,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "finished_at": job.finished_at.isoformat() if job.finished_at else None,
@@ -627,7 +682,7 @@ def get_job(job_id: int, user: User = Depends(current_user), db: Session = Depen
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     check_csrf(request)
-    job = _job_for(job_id, user, db)
+    job = _job_for(job_id, user, db, act=True)
     if job.status in ("queued", "running"):
         job.status, job.finished_at = "cancelled", utcnow()
         db.commit()
@@ -646,7 +701,7 @@ def rerun_job(job_id: int, request: Request, user: User = Depends(current_user),
 def retry_failed(job_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Analyzes this job's failed findings again; everything else in the job (results, posts, saved votes) stays."""
     check_csrf(request)
-    job = _job_for(job_id, user, db)
+    job = _job_for(job_id, user, db, act=True)
     if job.status in ("queued", "running"):
         raise HTTPException(409, "This analysis is still running.")
     failed = [f for f in job.findings if f.status == "error"]
@@ -662,11 +717,11 @@ def retry_failed(job_id: int, request: Request, user: User = Depends(current_use
 
 
 # ------------------------------------------------------------------ API: write-back (uses the acting user's token)
-def _finding_for(fid: int, user: User, db: Session) -> Finding:
+def _finding_for(fid: int, user: User, db: Session, act: bool = False) -> Finding:
     f = db.get(Finding, fid)
     if not f:
         raise HTTPException(404, "That finding doesn't exist.")
-    _job_for(f.job_id, user, db)
+    _job_for(f.job_id, user, db, act)
     return f
 
 
@@ -681,7 +736,7 @@ def post_note(fid: int, request: Request, user: User = Depends(current_user), db
     """Comments the analysis on the finding's issue, creating (and self-assigning) the issue if there is none.
     Each finding's analysis is posted once; the row lock stops two quick clicks from both posting."""
     check_csrf(request)
-    _finding_for(fid, user, db)
+    _finding_for(fid, user, db, act=True)
     f = db.get(Finding, fid, with_for_update=True, populate_existing=True)
     posted = prompts.posted_note(f)
     if posted:
@@ -707,7 +762,7 @@ def post_note(fid: int, request: Request, user: User = Depends(current_user), db
 @app.post("/api/findings/{fid}/dismiss")
 def dismiss(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     check_csrf(request)
-    f = _finding_for(fid, user, db)
+    f = _finding_for(fid, user, db, act=True)
     if not f.vulnerability_gid:
         raise HTTPException(409, "This finding has no vulnerability record yet (it isn't on the default branch). "
                                  "Post the analysis instead.")
@@ -721,7 +776,7 @@ def dismiss(fid: int, request: Request, user: User = Depends(current_user), db: 
 @app.post("/api/findings/{fid}/mr")
 def open_fix_mr(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     check_csrf(request)
-    f = _finding_for(fid, user, db)
+    f = _finding_for(fid, user, db, act=True)
     if not f.fix or not f.fix.get("edits"):
         raise HTTPException(409, "This finding has no proposed fix.")
     job = f.job

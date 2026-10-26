@@ -6,6 +6,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 TOKEN = "glpat-test-token-1234"
+BOB_TOKEN = "glpat-bob-token-5678"
+USERS = {TOKEN: {"id": 1, "username": "alice"}, BOB_TOKEN: {"id": 2, "username": "bob"}}
+ACCESS = {TOKEN: 40, BOB_TOKEN: 30}  # role on project 1 per token (30 = Developer); tests may change it
 SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 REPORT = {
     "version": "15.0.0",
@@ -32,14 +35,14 @@ calls = []
 
 @gitlab.middleware("http")
 async def auth(request: Request, call_next):
-    if request.headers.get("private-token") != TOKEN:
+    if request.headers.get("private-token") not in USERS:
         return JSONResponse({"message": "401 Unauthorized"}, status_code=401)
     calls.append((request.method, request.url.path))
     return await call_next(request)
 
 
 @gitlab.get("/api/v4/user")
-def user(): return {"id": 1, "username": "alice"}
+def user(request: Request): return USERS[request.headers["private-token"]]
 
 
 @gitlab.get("/api/v4/personal_access_tokens/self")
@@ -55,7 +58,9 @@ def projects(): return [PROJECT]
 
 
 @gitlab.get("/api/v4/projects/1")
-def project(): return PROJECT
+def project(request: Request):
+    level = ACCESS[request.headers["private-token"]]
+    return {**PROJECT, "permissions": {"project_access": {"access_level": level} if level else None, "group_access": None}}
 
 
 @gitlab.get("/api/v4/projects/1/repository/branches")

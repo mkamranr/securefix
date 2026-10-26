@@ -333,7 +333,7 @@ body.auth { background: radial-gradient(1200px 600px at 20% 0%, #13305a 0%, var(
 .job-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 0.4rem; flex-wrap: wrap; }
 .job-head p { margin: 0.3rem 0 0; }
 .job-actions { display: flex; gap: 0.6rem; align-items: center; }
-.job-actions .button[hidden] { display: none; }
+.job-actions .button[hidden], .job-actions button[hidden] { display: none; }
 .xlsx-link { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; font-size: 0.88rem; }
 .progress { color: var(--ink-2); min-height: 1.5em; }
 .summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.9rem; margin: 0.6rem 0 1.1rem; }
@@ -347,6 +347,9 @@ body.auth { background: radial-gradient(1200px 600px at 20% 0%, #13305a 0%, var(
 .filters button { border: 0; border-right: 1px solid var(--line); border-radius: 0; background: var(--surface); }
 .filters button:last-child { border-right: 0; }
 .filters button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.filters .button { border: 0; border-right: 1px solid var(--line); border-radius: 0; background: var(--surface); }
+.filters .button:last-child { border-right: 0; }
+.filters .button[aria-current="page"] { background: var(--accent); color: #fff; }
 .ledger { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .finding { border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); }
 .finding:last-child { border-bottom: 0; }
