@@ -71,6 +71,9 @@ sink, mitigations), the code the model saw and, for real findings, a validated d
 
 ## Quick start
 
+> SecureFix's technical name is `vulntriage`: it names the Docker image, bundles, Docker volumes and database, so
+> commands and file names below use it.
+
 On a server with internet access, build the bundle:
 
 ```bash
