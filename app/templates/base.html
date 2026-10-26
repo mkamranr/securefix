@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>{% block title %}SecureFix{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% if user %}
+  {% set path = request.url.path %}
+  <header class="appbar">
+    <a class="brand" href="/">{{ icon('shield', 'brand-mark') }}<span class="brand-text"><b>SecureFix</b><small>AI-Powered SAST Analysis &amp; Fixes</small></span></a>
+    <div class="airgap" title="This server has no internet access; GitLab and the model run inside your network.">
+      {{ icon('lock') }}<span><b>Air-Gapped Environment</b><small>No Internet Connectivity</small></span>
+    </div>
+    <div class="appbar-right">
+      <a class="conn" id="gitlab-conn" data-state="checking" href="/settings#status">{{ icon('gitlab', 'i gl') }}<span class="dot"></span><span class="conn-label">Checking GitLab…</span></a>
+      <details class="usermenu">
+        <summary aria-label="Account menu"><span class="avatar">{{ user.initials }}</span><span class="uname">{{ user.display_name or user.username }}</span>{{ icon('chevron-down') }}</summary>
+        <div class="menu">
+          <div class="menu-head">
+            <b>{{ user.display_name or user.username }}</b>
+            <span>{{ user.username }}{% if user.email %} · {{ user.email }}{% endif %}</span>
+            <span class="menu-badges">{% if user.is_admin %}<span class="badge badge-admin">Administrator</span>{% endif %}{% if user.is_windows %}<span class="badge badge-windows">Windows account</span>{% else %}<span class="badge">Local account</span>{% endif %}</span>
+          </div>
+          <a href="/settings">{{ icon('settings') }} Settings</a>
+          <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button>{{ icon('logout') }} Sign out</button></form>
+        </div>
+      </details>
+    </div>
+  </header>
+  <div class="shell">
+    <aside class="sidebar">
+      <nav aria-label="Main">
+        <a href="/" {% if path == '/' %}aria-current="page"{% endif %}>{{ icon('home') }}Home</a>
+        <a href="/analyze" {% if path == '/analyze' %}aria-current="page"{% endif %}>{{ icon('code') }}Analyze Commit</a>
+        <a href="/history" {% if path.startswith('/history') or path.startswith('/jobs') %}aria-current="page"{% endif %}>{{ icon('history') }}History</a>
+        <a href="/settings" {% if path == '/settings' %}aria-current="page"{% endif %}>{{ icon('settings') }}Settings</a>
+        <p class="nav-group">GitLab Integration</p>
+        <a href="/settings#token">{{ icon('key') }}GitLab Token</a>
+        {% if user.is_admin %}<a href="/admin#validation">{{ icon('folder') }}Project Settings</a>{% endif %}
+        <p class="nav-group">Model &amp; Runtime</p>
+        {% if user.is_admin %}<a href="/admin#model">{{ icon('chip') }}LLM (vLLM)</a>{% endif %}
+        <a href="/settings#status">{{ icon('pulse') }}System Status<span class="dot" id="status-dot" data-state="checking"></span></a>
+        {% if user.is_admin %}
+        <p class="nav-group">Administration</p>
+        <a href="/admin#windows" {% if path == '/admin' %}aria-current="page"{% endif %}>{{ icon('idcard') }}Windows Sign-in</a>
+        <a href="/admin#users">{{ icon('users') }}Users</a>
+        {% endif %}
+      </nav>
+      <div class="offline-card">
+        {{ icon('shield') }}
+        <div><b>Offline Mode</b><span>All processing happens locally. No external connections.</span></div>
+      </div>
+    </aside>
+    <main class="content {% block main_class %}{% endblock %}">
+      {% block content %}{% endblock %}
+      <footer class="footer-strip">
+        {{ icon('info') }}<span>All processing happens locally on your air-gapped infrastructure. No data is sent to the internet.</span>
+        <span class="footer-tags"><span>{{ icon('gitlab') }}GitLab (self-hosted)</span><span>{{ icon('brain') }}vLLM (local)</span></span>
+      </footer>
+    </main>
+  </div>
+{% else %}
+  <main class="{% block auth_class %}auth-main{% endblock %}">
+    {% block anon_content %}{% endblock %}
+  </main>
+{% endif %}
+  <script src="/static/common.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

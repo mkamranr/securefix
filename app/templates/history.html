@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}History · SecureFix{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>History</h1>
+    <p class="lede">{{ 'Every analysis in the app.' if show_all else 'Analyses you started.' }} The 200 most recent are shown.</p>
+  </div>
+  {% if user.is_admin %}<a class="button" href="/history{{ '' if show_all else '?all=1' }}">{{ 'Show only mine' if show_all else 'Show everyone’s' }}</a>{% endif %}
+</div>
+{% if not jobs %}
+  <div class="panel empty">No analyses yet. <a href="/analyze">Pick a commit to analyze</a>.</div>
+{% else %}
+<div class="table-wrap">
+<table class="grid">
+  <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th class="num">Real</th><th class="num">Review</th><th class="num">False positive</th><th>Started</th>{% if show_all %}<th>By</th>{% endif %}<th><span class="visually-hidden">Report</span></th></tr></thead>
+  <tbody>
+  {% for j in jobs %}{% set c = counts.get(j.id, {}) %}
+    <tr>
+      <td><a href="/jobs/{{ j.id }}"><strong>#{{ j.id }}</strong></a></td>
+      <td>{{ j.project_path }}</td>
+      <td>{{ j.branch }}</td>
+      <td><code>{{ j.sha[:8] }}</code></td>
+      <td><span class="state state-{{ j.status }}">{{ j.status | capitalize }}</span></td>
+      <td class="num {{ 'num-real' if c.get('true_positive') }}">{{ c.get('true_positive', 0) }}</td>
+      <td class="num {{ 'num-review' if c.get('needs_review') }}">{{ c.get('needs_review', 0) }}</td>
+      <td class="num {{ 'num-fp' if c.get('false_positive') }}">{{ c.get('false_positive', 0) }}</td>
+      <td>{{ j.created_at | ago }}</td>
+      {% if show_all %}<td>{{ j.user.username }}</td>{% endif %}
+      <td><a class="xlsx-link" href="/jobs/{{ j.id }}/report.xlsx" download title="Download analysis #{{ j.id }} as an Excel report">{{ icon('download') }} Excel</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

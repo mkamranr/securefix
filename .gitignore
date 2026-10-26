@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+data/
+wheelhouse/
+.pytest_cache/
+dist/
+*.tar.gz
+*.zip
+*.sha256

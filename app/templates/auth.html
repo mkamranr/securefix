@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Sign in' if mode == 'login' else 'Set up the administrator' }} · SecureFix{% endblock %}
+{% block body_class %}auth{% endblock %}
+{% block anon_content %}
+<div class="auth-shell">
+  <aside class="auth-aside">
+    <span class="brand">{{ icon('shield', 'brand-mark') }}<span class="brand-text"><b>SecureFix</b><small>AI-Powered SAST Analysis &amp; Fixes</small></span></span>
+    <div>
+      <h1>Triage SAST findings with confidence</h1>
+      <p>Every GitLab SAST finding is checked against the real code by your local model.</p>
+    </div>
+    <ul>
+      <li>{{ icon('check-circle') }}Separates real vulnerabilities from false positives, with the evidence</li>
+      <li>{{ icon('check-circle') }}Proposes fixes, validated with your build, tests and re-scan</li>
+      <li>{{ icon('check-circle') }}Posts results to GitLab issues and opens fix merge requests</li>
+    </ul>
+    <div class="airgap">{{ icon('lock') }}<span><b>Air-Gapped Environment</b><small>No Internet Connectivity</small></span></div>
+  </aside>
+  <section class="auth-card">
+    {% if mode == 'login' %}
+      <h2>Sign in</h2>
+      <p class="lede">{% if windows %}Use your Windows account (for example <code>jdoe</code> or <code>CORP\jdoe</code>) or the account an administrator gave you.{% else %}Use the account an administrator gave you.{% endif %}</p>
+    {% else %}
+      <h2>Set up the administrator</h2>
+      <p class="lede">No accounts exist yet. This first account becomes the administrator; after that, administrators add accounts or turn on Windows sign-in.</p>
+    {% endif %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="{{ '/login' if mode == 'login' else '/register' }}" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Username <input name="username" autocomplete="username" required autofocus value="{{ username or '' }}" autocapitalize="none" spellcheck="false"></label>
+      <label>Password <input name="password" type="password" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" required {% if mode != 'login' %}minlength="12"{% endif %}>
+        {% if mode != 'login' %}<span class="hint">At least 12 characters.</span>{% endif %}</label>
+      <button class="primary full">{{ 'Sign in' if mode == 'login' else 'Create administrator' }}</button>
+    </form>
+    {% if mode == 'login' %}<p class="hint auth-foot">No account or forgot your password? Ask an administrator.{% if windows %} Windows passwords are managed in Windows.{% endif %}</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

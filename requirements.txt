@@ -1,0 +1,18 @@
+# Runtime dependencies (versions tested together). Installed into the Docker image at build time.
+fastapi==0.157.0
+starlette==1.9.0
+uvicorn==0.54.0
+pydantic==2.14.1
+SQLAlchemy==2.1.6
+httpx==0.28.1
+Jinja2==3.1.6
+itsdangerous==2.2.0
+python-multipart==0.0.32
+cryptography==46.0.6
+psycopg[binary]==3.3.6
+# Windows (Active Directory) sign-in. Pure Python, so a patch can also ship them (deploy/patch/vendor.txt).
+ldap3==2.9.1
+pyasn1==0.6.4
+# Excel analysis reports. Pure Python as well, but added in 1.2.0, which ships as a full bundle.
+openpyxl==3.1.5
+et-xmlfile==2.0.0

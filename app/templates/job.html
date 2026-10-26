@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Analysis #{{ job.id }} · SecureFix{% endblock %}
+{% block main_class %}page wide{% endblock %}
+{% block content %}
+<div id="job" data-job-id="{{ job.id }}">
+  <header class="job-head">
+    <div>
+      <p class="sub"><a href="/history">History</a> › Analysis #{{ job.id }}</p>
+      <h1><span id="job-project">{{ job.project_path }}</span></h1>
+      <p class="muted">Branch <strong>{{ job.branch }}</strong> at <code>{{ job.sha[:8] }}</code> · started by {{ job.user.username }} {{ job.created_at | ago }}</p>
+      <p class="muted">Severities analyzed: {% for s in (job.severities or ['all']) %}<span class="sev sev-{{ s }}">{{ s }}</span> {% endfor %}</p>
+    </div>
+    <div class="job-actions">
+      <span id="job-status" class="state state-{{ job.status }}">{{ job.status | capitalize }}</span>
+      <button id="cancel" hidden>Cancel</button>
+      <button id="retry-failed" hidden>Retry failed</button>
+      <button id="rerun" hidden>Run again</button>
+      <a id="download-report" class="button" href="/jobs/{{ job.id }}/report.xlsx" download hidden>{{ icon('download') }} Download report (Excel)</a>
+    </div>
+  </header>
+  <p id="job-progress" class="progress" role="status" aria-live="polite">{{ job.progress }}</p>
+  <p id="job-error" class="error" role="alert" hidden></p>
+  <div id="summary" class="summary" hidden></div>
+  <div class="filters" id="filters" hidden role="group" aria-label="Filter findings">
+    <button data-filter="all" aria-pressed="true">All</button>
+    <button data-filter="true_positive" aria-pressed="false">Real</button>
+    <button data-filter="needs_review" aria-pressed="false">Needs review</button>
+    <button data-filter="false_positive" aria-pressed="false">False positive</button>
+  </div>
+  <div class="bulkbar" id="bulkbar" hidden>
+    <span id="sel-count" class="sel-count">No findings selected</span>
+    <button class="primary" id="post-selected" disabled>Post analysis to GitLab issues</button>
+    <button class="link" id="clear-sel" hidden>Clear selection</button>
+    <span id="bulk-msg" class="act-msg" role="status" aria-live="polite"></span>
+  </div>
+  <div class="ledger">
+    <div class="ledger-head" id="ledger-head" hidden>
+      <label class="pick"><input type="checkbox" id="pick-all"><span class="visually-hidden">Select every analyzed finding that isn't posted yet</span></label>
+      <div class="cols" aria-hidden="true"><span>Severity</span><span>Verdict</span><span>Finding</span><span class="r">Location</span><span>GitLab issue</span></div>
+    </div>
+    <div id="findings"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/job.js"></script>{% endblock %}

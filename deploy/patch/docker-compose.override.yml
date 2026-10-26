@@ -1,0 +1,18 @@
+# Patch mode: runs the app code shipped in ./app on the image that was installed with the bundle, so a
+# code fix doesn't need new images. Pure-Python packages added since that image are in ./vendor.
+# Docker Compose loads this file automatically next to docker-compose.yml. Full bundles don't include it.
+services:
+  web:
+    command: ["bash", "./run.sh"]   # works even if the image's run.sh lost its execute bit
+    environment:
+      PYTHONPATH: /opt/vulntriage/vendor
+    volumes:
+      - ./app:/opt/vulntriage/app:ro
+      - ./run.sh:/opt/vulntriage/run.sh:ro
+      - ./vendor:/opt/vulntriage/vendor:ro
+  worker:
+    environment:
+      PYTHONPATH: /opt/vulntriage/vendor
+    volumes:
+      - ./app:/opt/vulntriage/app:ro
+      - ./vendor:/opt/vulntriage/vendor:ro

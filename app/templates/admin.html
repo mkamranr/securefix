@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Admin · SecureFix{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Administration</h1>
+    <p class="lede">Settings that apply to everyone. Only administrators see this page.</p>
+  </div>
+</div>
+
+<div class="admin-layout">
+  <nav class="subnav" aria-label="Admin sections">
+    <a href="#model" class="{{ 'active' if section in ('', 'model') }}">Local model</a>
+    <a href="#windows" class="{{ 'active' if section == 'windows' }}">Windows sign-in</a>
+    <a href="#users" class="{{ 'active' if section == 'users' }}">Users</a>
+    <a href="#validation" class="{{ 'active' if section == 'validation' }}">Fix validation</a>
+  </nav>
+
+  <div>
+    {% if saved %}<p class="notice" role="status">{{ saved }}</p>{% endif %}
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+    <section class="panel" id="model">
+      <div class="panel-head">
+        <div>
+          <h2>Local model (vLLM)</h2>
+          <p>Used for every user's new analyses; an analysis that is already running keeps the settings it started with.
+            {% if llm.overridden %}These values were changed here and override <code>.env</code>.{% else %}These values come from <code>.env</code>.{% endif %}</p>
+        </div>
+        <span class="badge" id="llm-state">Checking…</span>
+      </div>
+      <form method="post" action="/admin/llm" class="form-grid">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="span-2">Base URL <input name="base_url" value="{{ llm.base_url }}" required placeholder="http://vllm.internal:8000/v1"></label>
+        <label>Model <input name="model" value="{{ llm.model }}" required list="llm-models" autocomplete="off">
+          <span class="hint">Suggestions are the models the server reports.</span></label>
+        <datalist id="llm-models"></datalist>
+        <label>Timeout per request (seconds) <input name="timeout_s" type="number" min="10" max="3600" value="{{ llm.timeout_s }}" required></label>
+        <label>Parallel requests <input name="parallel" type="number" min="1" max="32" value="{{ llm.parallel }}" required>
+          <span class="hint">Model requests one analysis sends at the same time; vLLM processes them together. 1 = one after another. Lower it if vLLM runs out of memory or requests time out. Total load = this × worker threads.</span></label>
+        <label>Max tokens per reply <input name="max_tokens" type="number" min="1024" max="32768" value="{{ llm.max_tokens }}" required>
+          <span class="hint">Longest triage reply the model may write. A reply cut off at this limit is retried once with twice as many; raise it if findings fail with “cut off” or “wasn’t valid JSON”. Prompt plus reply must fit the model’s context length.</span></label>
+        <label>API key <input name="api_key" type="password" autocomplete="off" placeholder="{{ 'A key is saved; leave blank to keep it' if llm.has_key else 'None' }}"></label>
+        <div class="stack">
+          <label class="check"><input type="checkbox" name="structured_output" value="1" {% if llm.structured_output %}checked{% endif %}> Structured output (JSON schema); turn off for older vLLM builds</label>
+          {% if llm.has_key %}<label class="check"><input type="checkbox" name="clear_key" value="1"> Remove the saved API key</label>{% endif %}
+        </div>
+        <div class="form-actions span-2"><button class="primary">Save model settings</button></div>
+      </form>
+      {% if llm.overridden %}
+      <div class="panel-foot">
+        <form method="post" action="/admin/llm/reset" data-confirm="Go back to the vLLM settings in .env?">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="danger-link">Reset to the values in .env</button>
+        </form>
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="windows">
+      <div class="panel-head">
+        <div>
+          <h2>Windows sign-in (Active Directory)</h2>
+          <p>Lets people sign in with their Windows username and password. Their profile is created on first sign-in; their password stays in Active Directory, so they can't change or reset it here.</p>
+        </div>
+        {% if ldap.enabled %}<span class="badge badge-on">On</span>{% else %}<span class="badge">Off</span>{% endif %}
+      </div>
+      <form method="post" action="/admin/ldap" class="form-grid">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="check span-2"><input type="checkbox" name="enabled" value="1" {% if ldap.enabled %}checked{% endif %}> Allow Windows sign-in</label>
+        <label>Server URL <input name="server_url" value="{{ ldap.server_url }}" placeholder="ldaps://dc01.corp.example.com:636">
+          <span class="hint">Use <code>ldaps://</code> (port 636), or <code>ldap://</code> with StartTLS. Several domain controllers: use the domain's DNS name.</span></label>
+        <label>Domain <input name="domain" value="{{ ldap.domain }}" placeholder="corp.example.com">
+          <span class="hint">UPN suffix. Needed when there is no service account: users are checked as <code>user@domain</code>.</span></label>
+        <label class="span-2">Base DN <input name="base_dn" value="{{ ldap.base_dn }}" placeholder="DC=corp,DC=example,DC=com">
+          <span class="hint">Where user accounts are searched, e.g. the whole domain or an OU.</span></label>
+        <label>Service account DN (optional) <input name="bind_dn" value="{{ ldap.bind_dn }}" placeholder="CN=svc-vulntriage,OU=Service Accounts,DC=corp,DC=example,DC=com" autocomplete="off">
+          <span class="hint">A read-only account used to look users up. Recommended.</span></label>
+        <label>Service account password <input name="bind_password" type="password" autocomplete="new-password" placeholder="{{ 'A password is saved; leave blank to keep it' if ldap.has_bind_password else '' }}"></label>
+        <label class="span-2">User filter <input name="user_filter" value="{{ ldap.user_filter }}" spellcheck="false">
+          <span class="hint"><code>{username}</code> becomes the name the user typed, without <code>DOMAIN\</code> or <code>@domain</code>.</span></label>
+        <label>Allowed group DN (optional) <input name="required_group" value="{{ ldap.required_group }}" placeholder="CN=AppSec Triage,OU=Groups,DC=corp,DC=example,DC=com">
+          <span class="hint">Only members (including nested groups) can sign in. Empty: every account the filter finds.</span></label>
+        <label>Admin group DN (optional) <input name="admin_group" value="{{ ldap.admin_group }}" placeholder="CN=AppSec Admins,OU=Groups,DC=corp,DC=example,DC=com">
+          <span class="hint">Members become administrators, others users, on every sign-in. Empty: roles are set on this page.</span></label>
+        <div class="stack span-2">
+          <label class="check"><input type="checkbox" name="start_tls" value="1" {% if ldap.start_tls %}checked{% endif %}> Use StartTLS (for <code>ldap://</code> URLs)</label>
+          <label class="check"><input type="checkbox" name="verify_cert" value="1" {% if ldap.verify_cert %}checked{% endif %}> Verify the server certificate (uses <code>certs/ca.pem</code>)</label>
+          {% if ldap.has_bind_password %}<label class="check"><input type="checkbox" name="clear_bind_password" value="1"> Remove the saved service account password</label>{% endif %}
+        </div>
+        <div class="form-actions span-2"><button class="primary">Save Windows sign-in settings</button></div>
+      </form>
+      <div class="panel-foot">
+        <form method="post" action="/admin/ldap/test" class="form-actions">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="visually-hidden" for="ldap-lookup">Windows username to look up</label>
+          <input id="ldap-lookup" name="lookup" placeholder="Optional: a username to look up" class="narrow">
+          <button>Test saved settings</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" id="users">
+      <div class="panel-head">
+        <div>
+          <h2>Users</h2>
+          <p>Windows users appear here after their first sign-in. Local accounts are for people without a Windows account.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>User</th><th>Sign-in</th><th>Role</th><th>GitLab account</th><th>Last sign-in</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+        {% for u in users %}
+          <tr>
+            <td><strong>{{ u.username }}</strong>{% if u.display_name %}<br><span class="sub">{{ u.display_name }}</span>{% endif %}</td>
+            <td>{% if u.is_windows %}<span class="badge badge-windows">Windows</span>{% else %}<span class="badge">Local</span>{% endif %}</td>
+            <td>{% if u.is_admin %}<span class="badge badge-admin">Administrator</span>{% else %}User{% endif %}</td>
+            <td>{{ u.gitlab_username or '—' }}</td>
+            <td>{{ (u.last_login_at | ago) or '—' }}</td>
+            <td class="row-actions">{% if u.id != user.id %}
+              <form method="post" action="/admin/users/{{ u.id }}/toggle-admin"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="link">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button></form>
+              <form method="post" action="/admin/users/{{ u.id }}/delete" data-confirm="Delete {{ u.username }}? Their GitLab token is erased; their analyses stay in the history."><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger-link">Delete</button></form>
+            {% else %}<span class="sub">You</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% if ldap.admin_group %}<p class="hint">An admin group is set for Windows sign-in, so a Windows user's role is reset from that group at each sign-in.</p>{% endif %}
+      <p class="hint">Deleting a Windows user removes their profile; if the directory still allows them, a new profile is created when they sign in again. Use the allowed group to control access.</p>
+      <form method="post" action="/admin/users" class="project-config">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <h3>Add a local account</h3>
+        <label>Username <input name="username" pattern="[a-z0-9._\-]{3,80}" required autocapitalize="none"></label>
+        <label>Temporary password <input name="password" type="password" minlength="12" required autocomplete="new-password"></label>
+        <span></span>
+        <button class="primary">Add account</button>
+      </form>
+    </section>
+
+    <section class="panel" id="validation">
+      <div class="panel-head">
+        <div>
+          <h2>Fix validation commands</h2>
+          <p>Before a fix is offered, the app applies it to a copy of the commit and runs these commands in the repository root. A step fails on a non-zero exit code. In the re-scan command, <code>{files}</code> becomes the changed files, and the command must fail while the finding is still there.</p>
+        </div>
+      </div>
+      <p class="warn">These commands run on this server with the app's permissions, which is why only administrators can set them.</p>
+      {% for c in configs %}
+      <form method="post" action="/admin/projects" class="project-config">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="project_id" value="{{ c.gitlab_project_id }}">
+        <h3>Project {{ c.gitlab_project_id }}</h3>
+        <label>Build <input name="build_cmd" value="{{ c.build_cmd }}" placeholder="mvn -q -DskipTests package"></label>
+        <label>Tests <input name="test_cmd" value="{{ c.test_cmd }}" placeholder="pytest -q"></label>
+        <label>Re-scan <input name="rescan_cmd" value="{{ c.rescan_cmd }}" placeholder="semgrep scan --metrics=off --config /opt/rules --error {files}"></label>
+        <button>Save</button>
+      </form>
+      {% endfor %}
+      <form method="post" action="/admin/projects" class="project-config">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <h3>Add a project</h3>
+        <label>GitLab project ID <input name="project_id" type="number" required></label>
+        <label>Build <input name="build_cmd" placeholder="mvn -q -DskipTests package"></label>
+        <label>Tests <input name="test_cmd" placeholder="pytest -q"></label>
+        <label>Re-scan <input name="rescan_cmd" placeholder="semgrep scan --metrics=off --config /opt/rules --error {files}"></label>
+        <button class="primary">Add project</button>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/admin.js"></script>{% endblock %}

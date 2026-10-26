@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Home · SecureFix{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Welcome, {{ user.display_name or user.username }}</h1>
+    <p class="lede">Your analyses at a glance. {% if active %}{{ active }} analysis job{{ 's' if active != 1 }} queued or running on the server.{% endif %}</p>
+  </div>
+  <a class="button primary" href="/analyze">{{ icon('play') }} Analyze a commit</a>
+</div>
+{% if not user.gitlab_token_enc %}<p class="warn">Add your GitLab token in <a href="/settings#token">Settings</a> to start analyzing commits.</p>{% endif %}
+
+<div class="stats">
+  <div class="stat s-jobs">{{ icon('history') }}<div><b>{{ stats.jobs }}</b><span>Analyses run</span></div></div>
+  <div class="stat s-real">{{ icon('bug') }}<div><b>{{ stats.real }}</b><span>Real vulnerabilities</span></div></div>
+  <div class="stat s-review">{{ icon('flag') }}<div><b>{{ stats.review }}</b><span>Need human review</span></div></div>
+  <div class="stat s-fp">{{ icon('check-circle') }}<div><b>{{ stats.fp }}</b><span>False positives</span></div></div>
+</div>
+
+<div class="home-grid">
+  <section class="card">
+    <div class="card-head">{{ icon('history') }}<div><h2>Recent analyses</h2><p>The last analyses you started.</p></div></div>
+    {% if recent %}
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Started</th></tr></thead>
+        <tbody>
+        {% for j in recent %}
+          <tr>
+            <td><a href="/jobs/{{ j.id }}"><strong>#{{ j.id }}</strong></a></td>
+            <td>{{ j.project_path }}</td>
+            <td>{{ j.branch }}</td>
+            <td><code>{{ j.sha[:8] }}</code></td>
+            <td><span class="state state-{{ j.status }}">{{ j.status | capitalize }}</span></td>
+            <td>{{ j.created_at | ago }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint"><a href="/history">See the full history</a></p>
+    {% else %}
+    <p class="empty">No analyses yet. <a href="/analyze">Pick a commit to analyze</a>.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">{{ icon('pulse') }}<div><h2>System status</h2><p>Whether GitLab and the local model answer.</p></div></div>
+    <dl class="health" id="health"><dt>GitLab</dt><dd>Checking…</dd><dt>Local model</dt><dd>Checking…</dd></dl>
+    <p class="hint">How it works: pick a commit, the model checks each SAST finding against the code, then you review the verdicts and post them to GitLab issues or open fix merge requests.</p>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/settings.js"></script>{% endblock %}
