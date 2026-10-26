@@ -16,6 +16,7 @@ the full list. Some model settings can also be changed by administrators on the 
 | `VT_CONTEXT_TOKEN_BUDGET` | Tokens of code per finding (default 100000; the model's window is larger, but precision drops on very long prompts) |
 | `VT_TRIAGE_VOTES` | Independent triage runs per finding (default 3) |
 | `VT_LLM_MAX_TOKENS` | Longest triage reply in tokens (default 4096, 1024 to 32768). A reply cut off at this limit is retried once with twice as many. The prompt plus the reply must fit the model's context length |
+| `VT_LLM_THINKING` | Default for new analyses: `true` lets a reasoning model (Qwen3) think before it answers, `false` answers directly (default `true`). Users choose per analysis; it is sent to vLLM as `chat_template_kwargs.enable_thinking`. Thinking uses part of `VT_LLM_MAX_TOKENS` |
 | `VT_LLM_PARALLEL` | Model requests one analysis sends at the same time (default 4, 1 to 32). Total load on vLLM is this × `VT_WORKER_THREADS` × worker containers; lower it if vLLM logs preemptions or requests hit the timeout |
 | `VT_WORKER_THREADS` | Analysis jobs each worker container runs in parallel (default 2) |
 | `VT_CA_BUNDLE_IN_CONTAINER` | CA bundle path inside the containers (default `/certs/ca.pem`, mounted from `certs/ca.pem`) |
@@ -27,8 +28,8 @@ the full list. Some model settings can also be changed by administrators on the 
 
 ## Model settings (Admin page)
 
-Administrators can override the vLLM URL, model, API key, timeout, *Parallel requests*, *Max tokens per reply* and
-structured output under **Admin › Local model (vLLM)**. The overrides are stored in the database and apply to new analyses
+Administrators can override the vLLM URL, model, API key, timeout, *Parallel requests*, *Max tokens per reply*,
+*Thinking* (the default for new analyses) and structured output under **Admin › Local model (vLLM)**. The overrides are stored in the database and apply to new analyses
 without a restart. **Reset to the values in .env** undoes them.
 
 ## GitLab tokens

@@ -106,6 +106,11 @@
       {% endfor %}
     </fieldset>
     <p class="hint" id="severity-hint" hidden>Pick at least one severity to analyze.</p>
+    <fieldset class="choice inline" id="thinking" data-default="{{ default_thinking }}">
+      <legend>Model thinking</legend>
+      <label><input type="radio" name="thinking" value="on" {% if default_thinking == 'on' %}checked{% endif %}> On <span class="muted">(reasons first, slower)</span></label>
+      <label><input type="radio" name="thinking" value="off" {% if default_thinking == 'off' %}checked{% endif %}> Off <span class="muted">(answers directly, faster)</span></label>
+    </fieldset>
     <button class="primary big" id="start" disabled>{{ icon('play') }} <span>Start Analysis</span></button>
   </section>
 </section>

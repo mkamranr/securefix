@@ -7,6 +7,9 @@
   const selected = new Set();  // finding ids picked for posting to GitLab
   let filter = 'all', timer = null, job = null, posting = false;
   const eligible = f => canAct && f.status === 'done' && !f.posted;
+  const pct = c => c != null ? `${Math.round(c * 100)}%` : '';
+  const secs = s => { s = Math.round(s); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} m ${String(s % 60).padStart(2, '0')} s`; };
+  const modelRan = f => f.status === 'done' && !f.copied_from && f.duration_s != null;
 
   const VERDICT = {
     true_positive: ['Real', 'v-real'],
@@ -53,7 +56,8 @@
     if (f.verdict) {
       const conf = f.confidence != null ? `${Math.round(f.confidence * 100)}%` : 'n/a';
       const votes = (f.votes || []).map(v => (VERDICT[v.verdict] || [v.verdict])[0]).join(', ');
-      parts.push(`<p class="meta">Confidence ${conf}${votes ? `; independent runs: ${esc(votes)}` : ''}</p>`);
+      const cost = modelRan(f) ? ` · analyzed in ${secs(f.duration_s)}${f.completion_tokens ? ` · ${f.completion_tokens.toLocaleString()} tokens generated` : ''}` : '';
+      parts.push(`<p class="meta">Confidence ${conf}${votes ? `; independent runs: ${esc(votes)}` : ''}${cost}</p>`);
     }
     if (f.reasoning) parts.push(`<h3>Why</h3><div class="prose">${esc(f.reasoning)}</div>`);
     if ((f.evidence || []).length) parts.push(`<h3>Evidence</h3><ul class="evidence">${f.evidence.map(e => `<li><code>${esc(e)}</code></li>`).join('')}</ul>`);
@@ -102,8 +106,10 @@
       <button class="finding-head" aria-expanded="false" aria-controls="fd-${f.id}">
         <span class="sev sev-${esc(f.severity)}">${esc(f.severity)}</span>
         <span class="verdict-slot"></span>
+        <span class="f-conf"></span>
         <span class="f-title"></span>
         <span class="f-loc"></span>
+        <span class="f-time"></span>
         <span class="f-posted"></span>
       </button>
       <div class="finding-body" id="fd-${f.id}" hidden></div>`;
@@ -128,6 +134,14 @@
       el.querySelector('.f-title').insertAdjacentHTML('beforeend', ' <span class="tag-copied" title="Analysis copied from an earlier scan">Copied</span>');
     }
     el.querySelector('.f-loc').textContent = `${f.file}${f.start_line ? ':' + f.start_line : ''}`;
+    const conf = f.status === 'done' ? pct(f.confidence) : '';
+    el.querySelector('.f-conf').textContent = conf || '—';
+    el.querySelector('.f-conf').title = conf ? `Confidence ${conf}` : '';
+    const time = el.querySelector('.f-time');
+    if (f.status === 'done' && f.copied_from) { time.textContent = 'Copied'; time.title = 'Copied from an earlier scan: the model wasn’t asked'; }
+    else if (f.duration_s != null && f.status !== 'analyzing') { time.textContent = secs(f.duration_s); time.title = 'Time spent analyzing this finding'; }
+    else { time.textContent = f.status === 'analyzing' ? '…' : '—'; time.title = ''; }
+    time.classList.toggle('muted', !(f.duration_s != null && !f.copied_from));
     el.querySelector('.finding-body').innerHTML = detailHtml(f);
     el.querySelector('.pick .visually-hidden').textContent = `Select ${f.title} for posting to GitLab`;
     el.querySelector('.f-posted').innerHTML = f.posted
@@ -217,8 +231,9 @@
 
   function summary(fs) {
     const c = { true_positive: 0, false_positive: 0, needs_review: 0 };
-    let done = 0, copied = 0;
+    let done = 0, copied = 0, ran = 0, total = 0;
     fs.forEach(f => {
+      if (modelRan(f)) { ran++; total += f.duration_s; }
       if (['done', 'skipped', 'error'].includes(f.status)) done++;
       if (c[f.verdict] !== undefined) c[f.verdict]++;
       if (f.copied_from && f.status === 'done') copied++;
@@ -230,6 +245,7 @@
       <div class="s-review"><b>${c.needs_review}</b><span>need review</span></div>
       <div class="s-fp"><b>${c.false_positive}</b><span>false positives</span></div>
       <div><b>${done}/${fs.length}</b><span>analyzed</span></div>${
+        ran ? `<div><b>${secs(total / ran)}</b><span>avg time per finding</span></div>` : ''}${
         copied ? `<div><b>${copied}</b><span>copied from earlier scans</span></div>` : ''}`;
     $('filters').hidden = !fs.length;
   }
@@ -243,6 +259,7 @@
     $('job-error').hidden = !j.error; $('job-error').textContent = j.error || '';
     $('cancel').hidden = !canAct || !['queued', 'running'].includes(j.status);
     $('rerun').hidden = ['queued', 'running'].includes(j.status);
+    $('rerun-other').hidden = $('rerun').hidden;
     const failed = j.findings.filter(f => f.status === 'error').length;
     $('retry-failed').hidden = !canAct || !failed || ['queued', 'running'].includes(j.status);
     $('retry-failed').textContent = `Retry ${failed} failed`;
@@ -310,6 +327,11 @@
   });
   $('rerun').addEventListener('click', async () => {
     try { const r = await api(`/api/jobs/${jobId}/rerun`, { method: 'POST' }); location.href = `/jobs/${r.id}`; }
+    catch (e) { alert(e.message); }
+  });
+  $('rerun-other').addEventListener('click', async () => {  // the same commit with the other thinking mode, to compare
+    const thinking = $('rerun-other').dataset.thinking;
+    try { const r = await api(`/api/jobs/${jobId}/rerun`, { method: 'POST', body: { thinking } }); location.href = `/jobs/${r.id}`; }
     catch (e) { alert(e.message); }
   });
   refresh();

@@ -44,8 +44,8 @@ COLUMNS = [
     ("Finding", 46, WRAP), ("CWE", 11, TOP), ("Location", 38, WRAP), ("GitLab issue", 13, CENTER),
     ("Link", 24, TOP), ("Analysis posted", 15, CENTER), ("Posted by", 14, TOP), ("Posted at", 17, TOP),
     ("Fix proposed", 13, CENTER), ("Fix validation", 15, TOP), ("Fix MR", 10, CENTER), ("Dismissed", 11, CENTER),
-    ("Copied from", 13, CENTER), ("Scanner", 18, TOP), ("Status", 11, TOP), ("Reasoning", 80, WRAP),
-    ("Error", 40, WRAP),
+    ("Copied from", 13, CENTER), ("Scanner", 18, TOP), ("Status", 11, TOP), ("Analysis time (s)", 12, CENTER),
+    ("Tokens generated", 12, CENTER), ("Reasoning", 80, WRAP), ("Error", 40, WRAP),
 ]
 
 
@@ -88,6 +88,15 @@ def _when(value) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _duration(findings) -> str:
+    """Total and average time of the findings the model analyzed (copied ones took no model time)."""
+    times = [f.duration_s for f in findings if f.status == "done" and not f.copied_from and f.duration_s is not None]
+    if not times:
+        return "No findings were analyzed by the model"
+    total = sum(times)
+    return f"{total / 60:.1f} min in total, {total / len(times):.1f} s per analyzed finding ({len(times)})"
 
 
 def _verdict(f) -> str:
@@ -155,6 +164,9 @@ def _findings_sheet(ws, job, gitlab_url: str):
             (f"#{copied}" if copied else "", {"align": CENTER}),
             (f.scanner or "", {}),
             (STATUSES.get(f.status, f.status), {}),
+            # A copied analysis didn't ask the model: no time or tokens of its own worth comparing.
+            (round(f.duration_s, 1) if f.duration_s is not None and not copied else "", {"fmt": "0.0", "align": CENTER}),
+            ((f.completion_tokens or "") if not copied else "", {"fmt": "#,##0", "align": CENTER}),
             (f.reasoning or "", {"align": WRAP}),
             (f.error or "", {"align": WRAP}),
         ]
@@ -208,6 +220,8 @@ def _summary_sheet(ws, job, gitlab_url: str, generated_by: str):
         ("Started", _when(job.created_at), None),
         ("Finished", _when(job.finished_at), None),
         ("Severities analyzed", ", ".join(s.capitalize() for s in job.severities) if job.severities else "All", None),
+        ("Model thinking", (job.thinking or "on").capitalize(), None),
+        ("Analysis time", _duration(job.findings), None),
         ("Report generated", f"{_when(datetime.now(timezone.utc))} by {generated_by}", None),
     ]
     row = 5

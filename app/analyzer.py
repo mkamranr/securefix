@@ -4,13 +4,14 @@ import hashlib
 import logging
 import shutil
 import threading
+import time
 import xml.etree.ElementTree as ET
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from . import prompts
 from .config import settings
@@ -162,7 +163,8 @@ class JobRunner:
         if not user.gitlab_token_enc:
             raise GitLabError("The user who started this analysis has no GitLab token in Settings.")
         self.gl = GitLabClient(decrypt_token(user.gitlab_token_enc), user.gitlab_token_type)
-        self.llm = LLMClient()
+        self.thinking = self.job.thinking or "on"  # analyses from before the choice ran with the model's default
+        self.llm = LLMClient(thinking=self.thinking == "on")
         self.workdir = settings.checkouts_dir / f"job-{job_id}"
         cfg = self.db.scalar(select(ProjectConfig).where(ProjectConfig.gitlab_project_id == self.job.project_id))
         if cfg is not None:
@@ -256,6 +258,7 @@ class JobRunner:
             f = db.get(Finding, fid)
             with self._lock:
                 self._active += 1
+            started = time.monotonic()
             try:
                 self.progress(self._progress_text(f.title))
                 self.analyze(f, db)
@@ -265,6 +268,8 @@ class JobRunner:
                 log.exception("Finding %s failed", f.id)
                 f.status, f.error = "error", str(exc)
             finally:
+                # Accumulates over a resume or a retry; a copied analysis only records its own (short) time.
+                f.duration_s = round((f.duration_s or 0) + time.monotonic() - started, 2)
                 db.commit()
                 with self._lock:
                     self._active -= 1
@@ -334,6 +339,7 @@ class JobRunner:
             select(Finding).join(AnalysisJob, Finding.job_id == AnalysisJob.id)
             .where(Finding.code_key.in_((f.code_key, "")),  # "": analyzed before code keys existed
                    AnalysisJob.project_id == self.job.project_id, Finding.job_id != f.job_id,
+                   func.coalesce(AnalysisJob.thinking, "on") == self.thinking,  # A/B runs must ask the model
                    Finding.status == "done", Finding.verdict.is_not(None), Finding.context_tokens > 0,
                    Finding.file == f.file, Finding.start_line == f.start_line,
                    Finding.end_line.is_not_distinct_from(f.end_line), Finding.title == f.title,
@@ -372,7 +378,8 @@ class JobRunner:
             return
 
         f.cache_key = hashlib.sha256(
-            f"{f.uuid}|{ctx.digest}|{self.llm.cfg['model']}|{prompts.PROMPT_VERSION}".encode()).hexdigest()
+            f"{f.uuid}|{ctx.digest}|{self.llm.cfg['model']}|{prompts.PROMPT_VERSION}|thinking={self.thinking}"
+            .encode()).hexdigest()
         cached = db.scalar(select(Finding).where(Finding.cache_key == f.cache_key, Finding.status == "done",
                                                       Finding.id != f.id).order_by(Finding.id.desc()))
         if cached:
@@ -402,20 +409,23 @@ class JobRunner:
 
         def vote():
             self.check_cancelled()
-            return self.llm.chat_json(prompts.TRIAGE_SYSTEM, user_prompt, prompts.TRIAGE_SCHEMA, "triage",
-                                      temperature=temperature)
+            usage = []
+            res, raw = self.llm.chat_json(prompts.TRIAGE_SYSTEM, user_prompt, prompts.TRIAGE_SCHEMA, "triage",
+                                          temperature=temperature, usage=usage)
+            return res, raw, sum(usage)
 
         missing, failure = n_votes - len(votes), None
         if missing:
             with ThreadPoolExecutor(max_workers=missing) as pool:
                 for fut in as_completed([pool.submit(vote) for _ in range(missing)]):
                     try:
-                        res, raw = fut.result()
+                        res, raw, tokens = fut.result()
                     except BaseException as exc:  # noqa: BLE001 - save the votes that did arrive, then fail
                         failure = failure or exc
                         continue
                     votes.append(res)
-                    logs.append({"call": "triage", "response": raw, "parsed": res, "key": f.cache_key})
+                    logs.append({"call": "triage", "response": raw, "parsed": res, "key": f.cache_key,
+                                 "tokens": tokens})
                     f.llm_log = list(logs)
                     db.commit()
         # A run whose reply was unreadable doesn't sink the finding if other runs answered; it only lowers confidence.
@@ -446,15 +456,17 @@ class JobRunner:
             self.check_cancelled()
             self.fix(f, block, context, chosen, logs)
         f.llm_log = logs
+        f.completion_tokens = sum(e.get("tokens") or 0 for e in logs)
         f.status = "done"
 
     def fix(self, f: Finding, block: str, context: str, triage: dict, logs: list):
         error = ""
         for attempt in range(2):  # one retry with the validation output
+            usage = []
             res, raw = self.llm.chat_json(prompts.FIX_SYSTEM, prompts.fix_user_prompt(block, context, triage, error),
                                           prompts.FIX_SCHEMA, "fix", temperature=0.0,
-                                          max_tokens=max(8192, self.llm.cfg["max_tokens"]))
-            logs.append({"call": f"fix attempt {attempt + 1}", "response": raw})
+                                          max_tokens=max(8192, self.llm.cfg["max_tokens"]), usage=usage)
+            logs.append({"call": f"fix attempt {attempt + 1}", "response": raw, "tokens": sum(usage)})
             f.fix = res
             originals = {}
             for e in res.get("edits") or []:

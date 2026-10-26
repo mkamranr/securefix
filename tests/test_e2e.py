@@ -424,12 +424,12 @@ def test_report_text_is_never_a_formula():
     f = NS(id=1, uuid="u", vulnerability_gid=None, title="=HYPERLINK(\"http://evil\",\"x\")", severity="high",
            scanner="semgrep", cwe="CWE-89", file="app.py", start_line=3, end_line=3, status="done",
            verdict="true_positive", confidence=0.9, reasoning="+cmd|' /C calc'!A0", fix=None, diff="",
-           validation_status=None, error=None, actions=[], copied_from=None)
+           validation_status=None, error=None, actions=[], copied_from=None, duration_s=None, completion_tokens=None)
     job = NS(id=5, project_path="grp/app", branch="main", sha="a" * 40, pipeline_id=None, status="done",
-             user=NS(username="alice"), created_at=None, finished_at=None, severities=None, findings=[f])
+             user=NS(username="alice"), created_at=None, finished_at=None, severities=None, thinking=None, findings=[f])
     ws = load_workbook(BytesIO(build_report(job, "https://gl", "alice")))["Findings"]
     assert ws["E2"].data_type == "s" and ws["E2"].value.startswith("=HYPERLINK")
-    assert ws["T2"].data_type == "s" and ws["T2"].value == "+cmd|' /C calc'!A0"  # control character dropped
+    assert ws["V2"].data_type == "s" and ws["V2"].value == "+cmd|' /C calc'!A0"  # control character dropped
 
 
 def test_vulnerability_url():
@@ -745,3 +745,57 @@ def test_shared_analysis_is_read_only(client, fake_services):
         finally:
             fake_services.ACCESS[fake_services.BOB_TOKEN] = 30
             main._access.clear()
+
+
+def test_thinking_mode_per_analysis(client, fake_services, monkeypatch):
+    """Thinking is chosen per analysis, sent to vLLM, and earlier results are only reused within the same mode."""
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from app.analyzer import JobRunner
+    from app.worker import _claim_next
+    h = {"X-CSRF-Token": csrf(client, "/")}
+    _forget_results()
+    sent = fake_services.vllm.state.thinking
+    calls = _count_calls(monkeypatch)
+    body = {"project_id": 1, "project_path": "grp/app", "branch": "feature/login", "sha": fake_services.SHA,
+            "severities": ["high", "low"]}
+    assert client.post("/api/jobs", headers=h, json={**body, "thinking": "maybe"}).status_code == 400
+
+    sent.clear()
+    off = client.post("/api/jobs", headers=h, json={**body, "thinking": "off"}).json()["id"]
+    assert _claim_next() == off
+    JobRunner(off).run()
+    job = client.get(f"/api/jobs/{off}").json()
+    assert job["thinking"] == "off" and sent and set(sent) == {False}
+    for f in job["findings"]:
+        assert f["status"] == "done" and f["duration_s"] > 0 and f["completion_tokens"] >= 120
+    assert ">Off<" in client.get("/history").text and "Run with thinking on" in client.get(f"/jobs/{off}").text
+
+    # The same commit with thinking on asks the model again, and the <think> block doesn't break the JSON.
+    sent.clear(); calls.clear()
+    on = client.post(f"/api/jobs/{off}/rerun", headers=h, json={"thinking": "on"}).json()["id"]
+    assert _claim_next() == on
+    JobRunner(on).run()
+    job_on = client.get(f"/api/jobs/{on}").json()
+    assert job_on["thinking"] == "on" and calls and set(sent) == {True}
+    assert all(f["copied_from"] is None and f["verdict"] for f in job_on["findings"])
+    assert all(f["completion_tokens"] > g["completion_tokens"] for f, g in zip(job_on["findings"], job["findings"]))
+
+    # Run again keeps the mode and copies from the analysis made with it: no model calls, no model time.
+    calls.clear()
+    again = client.post(f"/api/jobs/{on}/rerun", headers=h).json()["id"]
+    assert _claim_next() == again
+    JobRunner(again).run()
+    copied = client.get(f"/api/jobs/{again}").json()
+    assert copied["thinking"] == "on" and calls == []
+    assert all(f["copied_from"]["job"] == on and f["completion_tokens"] is None for f in copied["findings"])
+
+    ws = load_workbook(BytesIO(client.get(f"/jobs/{off}/report.xlsx").content))
+    summary = {r[1].value: r[2].value for r in ws["Summary"].iter_rows(min_row=1) if r[1].value}
+    assert summary["Model thinking"] == "Off" and "per analyzed finding (2)" in summary["Analysis time"]
+    head = [c.value for c in ws["Findings"][1]]
+    row = [c.value for c in ws["Findings"][2]]
+    assert head[3] == "Confidence" and isinstance(row[3], float)
+    assert row[head.index("Analysis time (s)")] > 0 and row[head.index("Tokens generated")] >= 120
+    copied_ws = load_workbook(BytesIO(client.get(f"/jobs/{again}/report.xlsx").content))["Findings"]
+    assert copied_ws.cell(2, head.index("Analysis time (s)") + 1).value in (None, "")

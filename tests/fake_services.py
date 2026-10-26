@@ -152,6 +152,7 @@ gitlab.state = {}
 
 vllm = FastAPI()
 vllm.state.load = {"now": 0, "peak": 0, "delay": 0.0}  # requests in flight, for the parallel-request tests
+vllm.state.thinking = []  # chat_template_kwargs.enable_thinking of each request
 vllm.state.cut = {"left": 0, "seen": []}  # replies to cut off at the token limit, and each request's (max_tokens, user)
 
 
@@ -176,6 +177,7 @@ async def _chat(request: Request):
     system, user = body["messages"][0]["content"], body["messages"][1]["content"]
     cut = vllm.state.cut
     cut["seen"].append((body["max_tokens"], user))
+    vllm.state.thinking.append((body.get("chat_template_kwargs") or {}).get("enable_thinking"))
     assert body["response_format"]["type"] == "json_schema"
     if "triaging" in system:
         if "Location: app.py:7-7" in user:
@@ -192,5 +194,10 @@ async def _chat(request: Request):
                "explanation": "Use a parameterized query.", "suggested_test": "def test_quote(): get_user(\"x'\")"}
     if cut["left"] > 0:
         cut["left"] -= 1
-        return {"choices": [{"message": {"content": json.dumps(out)[:40]}, "finish_reason": "length"}]}
-    return {"choices": [{"message": {"content": json.dumps(out)}, "finish_reason": "stop"}]}
+        return {"choices": [{"message": {"content": json.dumps(out)[:40]}, "finish_reason": "length"}],
+                "usage": {"completion_tokens": body["max_tokens"]}}
+    content = json.dumps(out)
+    if (body.get("chat_template_kwargs") or {}).get("enable_thinking"):  # as Qwen3 without a reasoning parser
+        content = "<think>Let me trace the input from source to sink {first}.</think>\n\n" + content
+    return {"choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 400 if "<think>" in content else 120}}

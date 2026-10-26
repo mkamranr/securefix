@@ -36,7 +36,7 @@ SHORTER = ("\n\nYour previous answer was too long and was cut off. Answer again 
 def _env_defaults() -> dict:
     return {"base_url": settings.llm_base_url, "model": settings.llm_model, "api_key": settings.llm_api_key,
             "structured_output": settings.llm_structured_output, "timeout_s": settings.llm_timeout_s,
-            "parallel": settings.llm_parallel, "max_tokens": settings.llm_max_tokens}
+            "parallel": settings.llm_parallel, "max_tokens": settings.llm_max_tokens, "thinking": settings.llm_thinking}
 
 
 def llm_overrides(db: Session) -> dict[str, str]:
@@ -60,6 +60,8 @@ def llm_config(db: Session | None = None) -> dict:
             log.warning("Saved vLLM API key can't be decrypted (secret key changed); using the .env key.")
     if "structured_output" in saved:
         cfg["structured_output"] = saved["structured_output"] == "true"
+    if "thinking" in saved:
+        cfg["thinking"] = saved["thinking"] == "true"
     if saved.get("timeout_s", "").isdigit():
         cfg["timeout_s"] = int(saved["timeout_s"])
     if saved.get("parallel", "").isdigit():
@@ -72,7 +74,8 @@ def llm_config(db: Session | None = None) -> dict:
 
 
 def save_llm_config(db: Session, base_url: str, model: str, structured_output: bool, timeout_s: int,
-                    api_key: str | None = None, parallel: int | None = None, max_tokens: int | None = None):
+                    api_key: str | None = None, parallel: int | None = None, max_tokens: int | None = None,
+                    thinking: bool | None = None):
     """api_key None keeps the saved key; any string (EMPTY for none) replaces it."""
     values = {"base_url": base_url, "model": model, "structured_output": "true" if structured_output else "false",
               "timeout_s": str(timeout_s)}
@@ -80,6 +83,8 @@ def save_llm_config(db: Session, base_url: str, model: str, structured_output: b
         values["parallel"] = str(parallel)
     if max_tokens is not None:
         values["max_tokens"] = str(max_tokens)
+    if thinking is not None:
+        values["thinking"] = "true" if thinking else "false"
     if api_key is not None:
         values["api_key"] = encrypt_token(api_key)
     app_settings.save(db, "llm", values)
@@ -109,6 +114,10 @@ def count_tokens(text: str) -> int:
 
 
 def _extract_json(text: str) -> dict:
+    # Reasoning models put their thinking before the answer when vLLM runs without a reasoning parser; Qwen3 sends
+    # an empty <think></think> when thinking is off. A reply cut off while thinking has no closing tag.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    text = re.sub(r"^\s*<think>.*", "", text, flags=re.S)
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
     try:
         return json.loads(text)
@@ -120,9 +129,11 @@ def _extract_json(text: str) -> dict:
 
 
 class LLMClient:
-    def __init__(self):
-        # Read once per client: a job keeps the settings it started with.
+    def __init__(self, thinking: bool | None = None):
+        # Read once per client: a job keeps the settings it started with. thinking overrides the default per job.
         self.cfg = llm_config()
+        if thinking is not None:
+            self.cfg["thinking"] = thinking
         self.http = httpx.Client(base_url=self.cfg["base_url"], timeout=self.cfg["timeout_s"],
                                  headers={"Authorization": f"Bearer {self.cfg['api_key']}"})
         # Requests this client (one job) may have open at once; held only around the HTTP call.
@@ -139,10 +150,14 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "models": [], "detail": f"Can't reach vLLM at {self.cfg['base_url']}: {exc}"}
 
-    def _post(self, messages: list, schema: dict, name: str, temperature: float, max_tokens: int) -> tuple[str, bool]:
-        """One request; returns (reply text, whether it was cut off at max_tokens)."""
+    def _post(self, messages: list, schema: dict, name: str, temperature: float, max_tokens: int,
+              usage: list | None = None) -> tuple[str, bool]:
+        """One request; returns (reply text, whether it was cut off at max_tokens). Appends the tokens the model
+        generated (thinking included) to usage."""
         body = {"model": self.cfg["model"], "messages": messages, "temperature": temperature,
-                "max_tokens": max_tokens}
+                "max_tokens": max_tokens,
+                # Qwen3's chat template switches its thinking with this; templates without it ignore it.
+                "chat_template_kwargs": {"enable_thinking": bool(self.cfg["thinking"])}}
         if self.cfg["structured_output"]:
             body["response_format"] = {"type": "json_schema",
                                        "json_schema": {"name": name, "schema": schema, "strict": True}}
@@ -153,16 +168,20 @@ class LLMClient:
             raise LLMError(f"Can't reach vLLM: {exc}") from exc
         if r.status_code >= 400:
             raise LLMError(f"vLLM returned {r.status_code}: {r.text[:500]}", r.status_code)
-        choice = r.json()["choices"][0]
+        reply = r.json()
+        if usage is not None:
+            usage.append((reply.get("usage") or {}).get("completion_tokens") or 0)
+        choice = reply["choices"][0]
         return choice["message"].get("content") or "", choice.get("finish_reason") == "length"
 
     def chat_json(self, system: str, user: str, schema: dict, name: str,
-                  temperature: float = 0.0, max_tokens: int | None = None) -> tuple[dict, str]:
+                  temperature: float = 0.0, max_tokens: int | None = None,
+                  usage: list | None = None) -> tuple[dict, str]:
         """Returns (parsed JSON, raw text). Retries once if the reply isn't valid JSON: a reply cut off at the token
         limit is asked again with a larger limit and a request to be brief, anything else is asked for only the JSON."""
         tokens = max_tokens or self.cfg["max_tokens"]
         first = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        raw, cut = self._post(first, schema, name, temperature, tokens)
+        raw, cut = self._post(first, schema, name, temperature, tokens, usage)
         try:
             return _extract_json(raw), raw
         except (json.JSONDecodeError, ValueError) as exc:
@@ -172,13 +191,13 @@ class LLMClient:
             short = [first[0], {"role": "user", "content": user + SHORTER}]
             bigger = max(tokens, min(tokens * 2, RETRY_TOKENS_CAP))
             try:
-                raw, cut = self._post(short, schema, name, temperature, bigger)
+                raw, cut = self._post(short, schema, name, temperature, bigger, usage)
             except LLMError as exc:
                 if exc.status != 400 or bigger == tokens:
                     raise
                 # Most likely the prompt plus the larger reply exceed the model's context: keep the old limit.
                 bigger = tokens
-                raw, cut = self._post(short, schema, name, temperature, tokens)
+                raw, cut = self._post(short, schema, name, temperature, tokens, usage)
             try:
                 return _extract_json(raw), raw
             except (json.JSONDecodeError, ValueError) as exc:
@@ -189,7 +208,7 @@ class LLMClient:
         else:
             raw2, _ = self._post(first + [{"role": "assistant", "content": raw},
                                           {"role": "user", "content": "Reply with only the JSON object."}],
-                                 schema, name, temperature, tokens)
+                                 schema, name, temperature, tokens, usage)
             try:
                 return _extract_json(raw2), raw2
             except (json.JSONDecodeError, ValueError) as exc:

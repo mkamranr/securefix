@@ -90,6 +90,9 @@ There are two ways a finding can reuse earlier work:
   them, and at each taint-trace step. The finding is marked *Copied* and links to the analysis it came from.
 - **Exact cache hit**: the whole context, model and prompt version are identical.
 
+Both only reuse analyses made with the same **thinking** setting, so analyzing a commit again with thinking switched
+on or off really asks the model, and the two can be compared.
+
 A copied analysis counts as posted if the analysis it was copied from was posted to GitLab, so the same comment
 is never added to an issue twice.
 

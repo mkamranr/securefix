@@ -33,6 +33,9 @@ class Settings:
     llm_max_tokens: int = int(os.getenv("VT_LLM_MAX_TOKENS", "4096"))
     # Use vLLM structured outputs (response_format json_schema). Turn off for older vLLM builds.
     llm_structured_output: bool = _bool("VT_LLM_STRUCTURED_OUTPUT", True)
+    # Default for new analyses: let the model think before answering (Qwen3 enable_thinking). Slower, often more
+    # careful; users can pick per analysis.
+    llm_thinking: bool = _bool("VT_LLM_THINKING", True)
     # Local path or name of the model's tokenizer (optional; falls back to a char estimate).
     tokenizer_path: str = os.getenv("VT_TOKENIZER_PATH", "")
 

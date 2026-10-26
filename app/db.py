@@ -74,6 +74,7 @@ class AnalysisJob(Base):
     default_branch: Mapped[str] = mapped_column(String(500), default="")
     pipeline_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     severities: Mapped[list | None] = mapped_column(JSON, nullable=True)  # severities to analyze; None = all
+    thinking: Mapped[str | None] = mapped_column(String(10), nullable=True)  # on|off; None (older analyses) = on
     status: Mapped[str] = mapped_column(String(20), default="queued", index=True)  # queued|running|done|failed|cancelled
     progress: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -116,6 +117,8 @@ class Finding(Base):
     injection_suspected: Mapped[bool] = mapped_column(Boolean, default=False)
     context_files: Mapped[list] = mapped_column(JSON, default=list)
     context_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)  # wall-clock time spent analyzing it
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)  # tokens the model generated for it
     cache_key: Mapped[str] = mapped_column(String(100), default="", index=True)
     # Same vulnerability, file, lines and code (see analyzer.code_key): a later commit copies this analysis.
     code_key: Mapped[str] = mapped_column(String(64), default="", index=True)
@@ -142,8 +145,9 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 # Columns added after the first release. create_all doesn't touch existing tables, so init_db adds them.
 _ADDED_COLUMNS = {
-    "jobs": {"severities": "JSON"},
-    "findings": {"code_key": "VARCHAR(64) NOT NULL DEFAULT ''", "copied_from": "JSON"},
+    "jobs": {"severities": "JSON", "thinking": "VARCHAR(10)"},
+    "findings": {"code_key": "VARCHAR(64) NOT NULL DEFAULT ''", "copied_from": "JSON", "duration_s": "FLOAT",
+                 "completion_tokens": "INTEGER"},
     "users": {"auth_source": "VARCHAR(20) NOT NULL DEFAULT 'local'", "display_name": "VARCHAR(200)",
               "email": "VARCHAR(200)", "last_login_at": "TIMESTAMP WITH TIME ZONE"},
 }

@@ -289,7 +289,7 @@ def admin_page(request: Request, user: User = Depends(admin_user), db: Session =
 @app.post("/admin/llm")
 def save_llm(request: Request, base_url: str = Form(...), model: str = Form(...), api_key: str = Form(""),
              clear_key: str = Form(""), structured_output: str = Form(""), timeout_s: str = Form("900"),
-             parallel: str = Form(""), max_tokens: str = Form(""), csrf: str = Form(""),
+             parallel: str = Form(""), max_tokens: str = Form(""), thinking: str = Form(""), csrf: str = Form(""),
              user: User = Depends(admin_user),
              db: Session = Depends(get_db)):
     check_csrf(request, csrf)
@@ -309,7 +309,8 @@ def save_llm(request: Request, base_url: str = Form(...), model: str = Form(...)
         return back_to_admin("model", error=f"Use a reply limit between {low} and {high} tokens.")
     key = "EMPTY" if clear_key else (api_key.strip() or None)
     save_llm_config(db, base_url, model, bool(structured_output), int(timeout_s), key,
-                    int(parallel) if parallel else None, int(max_tokens) if max_tokens else None)
+                    int(parallel) if parallel else None, int(max_tokens) if max_tokens else None,
+                    thinking == "on" if thinking in ("on", "off") else None)
     log.info("%s changed the vLLM settings (%s, %s, %s parallel)", user.username, base_url, model, parallel or "default")
     return back_to_admin("model", saved="Model settings saved. New analyses use them; running ones keep the old settings.")
 
@@ -450,7 +451,8 @@ def home_page(request: Request, user: User = Depends(current_user), db: Session 
 def analyze_page(request: Request, user: User = Depends(current_user)):
     if not user.gitlab_token_enc:
         return back_to_settings(error="Add your GitLab token to start.")
-    return render(request, "analyze.html", user, severities=SEVERITIES, default_severities=DEFAULT_SEVERITIES)
+    return render(request, "analyze.html", user, severities=SEVERITIES, default_severities=DEFAULT_SEVERITIES,
+                  default_thinking="on" if llm_config()["thinking"] else "off")
 
 
 @app.get("/history", response_class=HTMLResponse)
@@ -579,6 +581,11 @@ class JobIn(BaseModel):
     branch: str
     sha: str
     severities: list[str] = DEFAULT_SEVERITIES
+    thinking: str | None = None  # on|off; None: the default on the Admin page
+
+
+class RerunIn(BaseModel):
+    thinking: str | None = None
 
 
 DEVELOPER = 30  # GitLab shows a project's vulnerabilities from this role up, so other users' analyses do too
@@ -636,6 +643,9 @@ def create_job(body: JobIn, request: Request, user: User = Depends(current_user)
     if picked - set(SEVERITIES):
         raise HTTPException(400, f"Unknown severity: {', '.join(sorted(picked - set(SEVERITIES)))}.")
     severities = [s for s in SEVERITIES if s in picked]
+    if body.thinking not in (None, "on", "off"):
+        raise HTTPException(400, "Thinking must be on or off.")
+    thinking = body.thinking or ("on" if llm_config(db)["thinking"] else "off")
     with gitlab_for(user) as gl:
         project = gl.project(body.project_id)  # also checks the user can see it
         scan = gl.scan_status(body.project_id, body.sha)
@@ -643,12 +653,13 @@ def create_job(body: JobIn, request: Request, user: User = Depends(current_user)
         raise HTTPException(409, f"Pick a commit whose SAST scan has finished ({scan['label']}).")
     running = db.scalar(select(AnalysisJob).where(AnalysisJob.project_id == body.project_id,
                                                   AnalysisJob.sha == body.sha,
+                                                  func.coalesce(AnalysisJob.thinking, "on") == thinking,
                                                   AnalysisJob.status.in_(["queued", "running"])))
     if running:
         return {"id": running.id, "existing": True}
     job = AnalysisJob(user_id=user.id, project_id=body.project_id, project_path=project["path_with_namespace"],
                       branch=body.branch, sha=body.sha, default_branch=project.get("default_branch") or "",
-                      severities=severities, progress="Waiting for a free worker")
+                      severities=severities, thinking=thinking, progress="Waiting for a free worker")
     db.add(job)
     db.commit()
     return {"id": job.id, "existing": False}
@@ -659,7 +670,7 @@ def finding_json(f: Finding, job: AnalysisJob) -> dict:
         "id", "uuid", "vulnerability_gid", "title", "severity", "scanner", "identifiers", "cwe", "file",
         "start_line", "end_line", "description", "code_flows", "status", "verdict", "confidence", "votes",
         "reasoning", "evidence", "fix", "diff", "validation_status", "validation_log", "injection_suspected",
-        "context_files", "context_tokens", "error", "actions", "copied_from")}
+        "context_files", "context_tokens", "error", "actions", "copied_from", "duration_s", "completion_tokens")}
     posted = prompts.posted_note(f)
     out["posted"] = posted and {k: posted.get(k) for k in ("url", "by", "at", "issue_iid", "copied_from_job")}
     out["gitlab_url"] = prompts.vulnerability_url(f, job, settings.gitlab_url)
@@ -673,7 +684,7 @@ def get_job(job_id: int, user: User = Depends(current_user), db: Session = Depen
             "sha": job.sha, "default_branch": job.default_branch, "status": job.status, "progress": job.progress,
             "error": job.error, "by": job.user.username, "can_act": job.user_id == user.id,
             "gitlab_url": settings.gitlab_url,
-            "severities": job.severities,
+            "severities": job.severities, "thinking": job.thinking or "on",
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "finished_at": job.finished_at.isoformat() if job.finished_at else None,
             "findings": [finding_json(f, job) for f in job.findings]}
@@ -690,11 +701,14 @@ def cancel_job(job_id: int, request: Request, user: User = Depends(current_user)
 
 
 @app.post("/api/jobs/{job_id}/rerun")
-def rerun_job(job_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def rerun_job(job_id: int, request: Request, body: RerunIn | None = None, user: User = Depends(current_user),
+              db: Session = Depends(get_db)):
+    """A new analysis of the same commit; thinking on/off as the old one unless the body picks the other mode."""
     check_csrf(request)
     old = _job_for(job_id, user, db)
+    thinking = (body and body.thinking) or old.thinking or "on"
     return create_job(JobIn(project_id=old.project_id, project_path=old.project_path, branch=old.branch,
-                            sha=old.sha, severities=old.severities or SEVERITIES), request, user, db)
+                            sha=old.sha, severities=old.severities or SEVERITIES, thinking=thinking), request, user, db)
 
 
 @app.post("/api/jobs/{job_id}/retry-failed")

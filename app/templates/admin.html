@@ -40,6 +40,12 @@
           <span class="hint">Model requests one analysis sends at the same time; vLLM processes them together. 1 = one after another. Lower it if vLLM runs out of memory or requests time out. Total load = this × worker threads.</span></label>
         <label>Max tokens per reply <input name="max_tokens" type="number" min="1024" max="32768" value="{{ llm.max_tokens }}" required>
           <span class="hint">Longest triage reply the model may write. A reply cut off at this limit is retried once with twice as many; raise it if findings fail with “cut off” or “wasn’t valid JSON”. Prompt plus reply must fit the model’s context length.</span></label>
+        <label>Thinking (default for new analyses)
+          <select name="thinking">
+            <option value="on" {% if llm.thinking %}selected{% endif %}>On: the model reasons before answering (slower)</option>
+            <option value="off" {% if not llm.thinking %}selected{% endif %}>Off: the model answers directly (faster)</option>
+          </select>
+          <span class="hint">For reasoning models such as Qwen3. Users can still choose per analysis. Thinking uses part of <em>Max tokens per reply</em>, so raise that if replies get cut off with thinking on.</span></label>
         <label>API key <input name="api_key" type="password" autocomplete="off" placeholder="{{ 'A key is saved; leave blank to keep it' if llm.has_key else 'None' }}"></label>
         <div class="stack">
           <label class="check"><input type="checkbox" name="structured_output" value="1" {% if llm.structured_output %}checked{% endif %}> Structured output (JSON schema); turn off for older vLLM builds</label>

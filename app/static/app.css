@@ -19,6 +19,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }  /* buttons and flex boxes set display, which would otherwise show them */
 html { font-size: 14.5px; -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.5 var(--sans); min-height: 100vh; }
 a { color: var(--focus); text-underline-offset: 2px; }
@@ -360,7 +361,12 @@ body.auth { background: radial-gradient(1200px 600px at 20% 0%, #13305a 0%, var(
 .pick input:disabled { cursor: not-allowed; opacity: 0.35; }
 .ledger-head { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); border-bottom: 1px solid var(--line-strong); background: var(--surface-2); }
 .ledger-head[hidden] { display: none; }
-.ledger-head .cols, .finding-head { display: grid; grid-template-columns: 5.8rem 8.5rem 1fr minmax(10rem, 26%) 7.5rem; gap: 1rem; align-items: center; }
+.ledger-head .cols, .finding-head { display: grid; grid-template-columns: 5.8rem 8.5rem 5.2rem 1fr minmax(10rem, 22%) 5.6rem 7.5rem; gap: 1rem; align-items: center; }
+.f-conf, .f-time { font-variant-numeric: tabular-nums; text-align: right; font-size: 0.86rem; white-space: nowrap; }
+.f-time.muted { color: var(--muted); }
+.chip-think { display: inline-block; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; }
+.chip-think-on { background: var(--accent-soft); color: var(--focus); }
+.chip-think-off { background: var(--wait-bg); color: var(--ink-2); }
 .ledger-head .cols { padding: 0.55rem 1.1rem; font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .ledger-head .r { text-align: right; }
 .posted { display: inline-block; font-size: 0.76rem; font-weight: 600; padding: 0.14rem 0.55rem; border-radius: 999px; color: var(--muted); border: 1px solid var(--line-strong); white-space: nowrap; }
@@ -437,6 +443,7 @@ button.done:disabled { opacity: 1; color: var(--fp); border-color: var(--fp); ba
   .stats, .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .finding-head { grid-template-columns: 5rem 1fr; }
   .f-title, .f-loc, .f-posted { grid-column: 1 / -1; text-align: left; }
+  .f-conf, .f-time { text-align: left; }
   .ledger-head .cols { display: none; }
   .finding-body { padding: 0.3rem 1rem 1.2rem; }
   .project-config, .form-grid { grid-template-columns: 1fr; }

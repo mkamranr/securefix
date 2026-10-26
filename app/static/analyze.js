@@ -30,6 +30,18 @@
     updateReady();
   }));
 
+  // ---------------------------------------------------------------- thinking on/off (remembered like severities)
+  const THINK_KEY = 'vt-thinking';
+  const thinkBoxes = [...document.querySelectorAll('#thinking input[name=thinking]')];
+  const chosenThinking = () => (thinkBoxes.find(b => b.checked) || {}).value || null;
+  try {
+    const saved = localStorage.getItem(THINK_KEY);
+    if (saved === 'on' || saved === 'off') thinkBoxes.forEach(b => { b.checked = b.value === saved; });
+  } catch (e) { /* keep the default */ }
+  thinkBoxes.forEach(b => b.addEventListener('change', () => {
+    try { localStorage.setItem(THINK_KEY, chosenThinking()); } catch (e) { /* storage unavailable */ }
+  }));
+
   // ---------------------------------------------------------------- 1. project (searchable list)
   const pInput = $('project-input'), pList = $('projects');
   let projectItems = [];
@@ -248,7 +260,7 @@
     const label = startBtn.querySelector('span').textContent;
     startBtn.disabled = true; startBtn.querySelector('span').textContent = 'Starting…';
     try {
-      const r = await api('/api/jobs', { method: 'POST', body: { project_id: state.project.id, project_path: state.project.path, branch: state.branch.name, sha: c.sha, severities: chosenSeverities() } });
+      const r = await api('/api/jobs', { method: 'POST', body: { project_id: state.project.id, project_path: state.project.path, branch: state.branch.name, sha: c.sha, severities: chosenSeverities(), thinking: chosenThinking() } });
       setStep(5);
       location.href = `/jobs/${r.id}`;
     } catch (e) {
