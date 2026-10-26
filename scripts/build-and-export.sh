@@ -36,7 +36,7 @@ docker save "vulntriage:${VERSION}" "$POSTGRES_IMAGE" "$NGINX_IMAGE" | gzip > "$
 cp deploy/docker-compose.yml deploy/nginx.conf deploy/install.sh "$OUT/"
 sed "s/__VERSION__/${VERSION}/" deploy/.env.example > "$OUT/.env.example"
 printf '\n# Images included in this bundle\nPOSTGRES_IMAGE=%s\nNGINX_IMAGE=%s\n' "$POSTGRES_IMAGE" "$NGINX_IMAGE" >> "$OUT/.env.example"
-cp README.md "$OUT/"
+cp -r README.md docs "$OUT/"
 chmod +x "$OUT/install.sh"
 (cd "$OUT" && sha256sum images.tar.gz > images.tar.gz.sha256)
 

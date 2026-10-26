@@ -22,14 +22,15 @@ fi
 backup="patch-backup-$(date +%Y%m%d-%H%M%S)"
 echo "==> Backing up the current files to $dest/$backup"
 mkdir "$backup"
-for f in app vendor run.sh docker-compose.yml docker-compose.override.yml nginx.conf install.sh README.md requirements.txt; do
+for f in app vendor docs run.sh docker-compose.yml docker-compose.override.yml nginx.conf install.sh README.md requirements.txt; do
   if [[ -e "$f" ]]; then cp -a "$f" "$backup/"; fi
 done
 
 echo "==> Copying the patch"
-rm -rf app vendor
+rm -rf app vendor docs
 cp -r "$src/app" app
 cp -r "$src/vendor" vendor
+cp -r "$src/docs" docs
 cp "$src/run.sh" "$src/docker-compose.yml" "$src/docker-compose.override.yml" "$src/nginx.conf" \
    "$src/install.sh" "$src/README.md" "$src/requirements.txt" .
 chmod 755 run.sh install.sh

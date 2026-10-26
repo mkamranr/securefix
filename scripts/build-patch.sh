@@ -26,6 +26,7 @@ find "$OUT/vendor" \( -name __pycache__ -o -name bin \) -type d -prune -exec rm 
 if find "$OUT/vendor" -name '*.so' -o -name '*.pyd' | grep -q .; then
   echo "vendor/ contains compiled code, which won't run in the image. Build a full bundle instead."; exit 1
 fi
+cp -r docs "$OUT/docs"
 cp run.sh README.md requirements.txt deploy/docker-compose.yml deploy/nginx.conf deploy/install.sh \
    deploy/patch/docker-compose.override.yml deploy/patch/apply-patch.sh "$OUT/"
 chmod 755 "$OUT/run.sh" "$OUT/install.sh" "$OUT/apply-patch.sh"
