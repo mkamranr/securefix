@@ -79,6 +79,13 @@ def test_full_flow(client, fake_services):
     committed = fake_services.gitlab.state["last_commit"]
     assert committed["actions"][0]["file_path"] == "app.py"
     assert "(name,)" in committed["actions"][0]["content"]
+    # One merge request per finding: the button turns into "opened" and a second click is refused.
+    fake_services.gitlab.state["last_commit"] = None
+    r = c.post(f"/api/findings/{real['id']}/mr", headers=h)
+    assert r.status_code == 409 and "merge request !7 was already opened by alice" in r.json()["detail"]
+    assert fake_services.gitlab.state["last_commit"] is None
+    real = c.get(f"/api/jobs/{job_id}").json()["findings"][0]
+    assert real["mr"]["mr_iid"] == 7 and real["mr"]["url"].endswith("/merge_requests/7")
 
     # First post creates a confidential issue assigned to the poster, then comments on it.
     r = c.post(f"/api/findings/{fp['id']}/note", headers=h).json()
@@ -106,6 +113,13 @@ def test_full_flow(client, fake_services):
     assert fp2["posted"]["url"] == fp["posted"]["url"]
     r = c.post(f"/api/findings/{fp2['id']}/note", headers=h)
     assert r.status_code == 409 and f"from analysis #{job_id}" in r.json()["detail"] and len(issue["notes"]) == 1
+    # The same goes for the fix merge request of a copied analysis.
+    real2 = c.get(f"/api/jobs/{rerun_id}").json()["findings"][0]
+    assert real2["copied_from"]["job"] == job_id and real2["mr"]["mr_iid"] == 7
+    assert real2["mr"]["copied_from_job"] == job_id
+    r = c.post(f"/api/findings/{real2['id']}/mr", headers=h)
+    assert r.status_code == 409 and f"!7 was already opened from analysis #{job_id}" in r.json()["detail"]
+    assert fake_services.gitlab.state["last_commit"] is None
     # A new result from the model can be posted: it finds that issue and only adds a comment.
     from app.db import Finding, SessionLocal
     with SessionLocal() as db:
@@ -1015,3 +1029,12 @@ def test_gitlab_token_renewal(client, fake_services):
     assert r.status_code in (400, 401) and "sign in with GitLab again" in r.text
     assert _user("carol").gitlab_token_enc is None
     assert "Not connected" in c.get("/settings").text
+
+
+def test_fix_mr_reads_older_records():
+    from types import SimpleNamespace as NS
+    from app.prompts import fix_mr
+    old = NS(actions=[{"type": "fix merge request !12", "url": "u", "by": "bob", "at": "2026-01-02"}],
+             status="done", copied_from=None, id=1)
+    assert fix_mr(old)["mr_iid"] == 12 and fix_mr(old)["by"] == "bob"
+    assert fix_mr(NS(actions=[], status="done", copied_from=None, id=2)) is None

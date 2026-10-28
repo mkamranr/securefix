@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from .analyzer import SEVERITIES
-from .prompts import posted_note, vulnerability_url
+from .prompts import fix_mr, posted_note, vulnerability_url
 
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MAX_CELL = 32767  # Excel's limit per cell
@@ -134,7 +134,7 @@ def _findings_sheet(ws, job, gitlab_url: str):
     findings = _sorted(job.findings)
     for row, f in enumerate(findings, 2):
         posted = posted_note(f)
-        mr = _action(f, "fix merge request")
+        mr = fix_mr(f)
         verdict = _verdict(f)
         issue_url = (posted.get("url") or "").split("#note_")[0] if posted else ""
         vuln_url = vulnerability_url(f, job, gitlab_url)
@@ -159,7 +159,7 @@ def _findings_sheet(ws, job, gitlab_url: str):
             (_when(posted.get("at")) if posted else "", {}),
             (fix, {"align": CENTER}),
             (VALIDATION.get(f.validation_status, f.validation_status or "") if fix == "Yes" else "", {}),
-            (f"!{mr['type'].rsplit('!', 1)[-1]}" if mr else "", {"link": mr and mr.get("url"), "align": CENTER}),
+            (f"!{mr['mr_iid']}" if mr and mr.get("mr_iid") else ("Opened" if mr else ""), {"link": mr and mr.get("url"), "align": CENTER}),
             ("Yes" if _action(f, "dismissed") else "No", {"align": CENTER}),
             (f"#{copied}" if copied else "", {"align": CENTER}),
             (f.scanner or "", {}),

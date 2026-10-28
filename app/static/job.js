@@ -76,20 +76,27 @@
       parts.push(`<details><summary>Code the model saw (${f.context_files.length} excerpts, ${f.context_tokens.toLocaleString()} tokens)</summary><ul class="ctx">${
         f.context_files.map(c => `<li><code>${esc(c.path)}:${c.start}-${c.end}</code> ${esc(c.reason)}</li>`).join('')}</ul></details>`);
     }
+    const m = f.mr;
+    const mrIid = m && m.mr_iid ? ` !${esc(m.mr_iid)}` : '';
+    const mrLine = m ? `Fix merge request${mrIid} opened${
+      m.copied_from_job ? ` from the earlier <a href="/jobs/${esc(m.copied_from_job)}">analysis #${esc(m.copied_from_job)}</a>` : ''} by ${esc(m.by)}, ${esc(when(m.at))}${
+      m.url ? ` (<a href="${esc(m.url)}" target="_blank" rel="noopener">open merge request</a>)` : ''}.` : '';
     if (f.status === 'done' && !canAct) {
       const p = f.posted;
       if (p) parts.push(`<p class="act-msg">Posted${p.issue_iid ? ` on issue #${esc(p.issue_iid)}` : ''} by ${esc(p.by)}, ${esc(when(p.at))}${
         p.url ? ` (<a href="${esc(p.url)}" target="_blank" rel="noopener">open comment</a>)` : ''}.</p>`);
+      if (m) parts.push(`<p class="act-msg">${mrLine}</p>`);
     } else if (f.status === 'done') {
       const p = f.posted;
       const btns = [p ? '<button data-act="note" class="done" disabled>Analysis posted ✓</button>'
                       : '<button data-act="note">Post analysis to GitLab issue</button>'];
-      if (f.fix && f.diff) btns.push('<button class="primary" data-act="mr">Open fix merge request</button>');
+      if (m) btns.push(`<button data-act="mr" class="done" disabled>Merge request${mrIid} opened ✓</button>`);
+      else if (f.fix && f.diff) btns.push('<button class="primary" data-act="mr">Open fix merge request</button>');
       if (f.vulnerability_gid && f.verdict !== 'true_positive') btns.push('<button class="danger" data-act="dismiss">Dismiss as false positive</button>');
       const posted = p ? `Already posted${p.issue_iid ? ` on issue #${esc(p.issue_iid)}` : ''}${
         p.copied_from_job ? ` from the earlier <a href="/jobs/${esc(p.copied_from_job)}">analysis #${esc(p.copied_from_job)}</a>` : ''} by ${esc(p.by)}, ${esc(when(p.at))}${
         p.url ? ` (<a href="${esc(p.url)}" target="_blank" rel="noopener">open comment</a>)` : ''}.` : '';
-      parts.push(`<div class="actions">${btns.join('')}<span class="act-msg" role="status">${posted}</span></div>`);
+      parts.push(`<div class="actions">${btns.join('')}<span class="act-msg" role="status">${[posted, mrLine].filter(Boolean).join(' ')}</span></div>`);
       if (!p) parts.push('<p class="hint">The analysis is added once as a comment on this vulnerability’s GitLab issue. If it has none yet, a confidential issue is created first and assigned to you.</p>');
     }
     if ((f.actions || []).length) {
@@ -225,7 +232,7 @@
       refresh();
     } catch (e) {
       msg.textContent = e.message;
-      if (e.status === 409 && kind === 'note') { rows.get(fid).sig = ''; refresh(); } else btn.disabled = false;
+      if (e.status === 409 && (kind === 'note' || kind === 'mr')) { rows.get(fid).sig = ''; refresh(); } else btn.disabled = false;
     }
   }
 

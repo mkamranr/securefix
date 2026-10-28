@@ -151,23 +151,44 @@ def _own_posted_note(f) -> dict | None:
     return a
 
 
-def posted_note(f) -> dict | None:
-    """The action recording that this finding's analysis was posted to GitLab (entries from p2 have no kind).
-    A copied analysis counts as posted when the finding it was copied from (or that one's source) was posted, so the
-    same analysis isn't commented twice; the result then names that analysis in `copied_from_job`."""
-    a = _own_posted_note(f)
+def _own_fix_mr(f) -> dict | None:
+    a = next((a for a in f.actions or []
+              if a.get("kind") == "mr" or str(a.get("type", "")).startswith("fix merge request")), None)
+    if a and not a.get("mr_iid"):
+        m = re.search(r"!(\d+)", str(a.get("type", "")))
+        a = {**a, "mr_iid": int(m.group(1)) if m else None}
+    return a
+
+
+def _follow_copies(f, own) -> dict | None:
+    """`own(f)`, or for a copied analysis the first `own(source)` along the chain it was copied from, which then
+    names that analysis in `copied_from_job`."""
+    a = own(f)
     if a or f.status != "done" or not (f.copied_from or {}).get("finding"):
         return a
     db = object_session(f)
     seen, src = {f.id}, f
-    while db is not None and len(seen) <= 10:  # a copy of a copy: follow the chain to the analysis that was posted
+    while db is not None and len(seen) <= 10:  # a copy of a copy: follow the chain to the analysis that acted
         fid = (src.copied_from or {}).get("finding")
         if not fid or fid in seen or (src := db.get(Finding, fid)) is None:
             return None
         seen.add(fid)
-        if a := _own_posted_note(src):
+        if a := own(src):
             return {**a, "copied_from_job": src.job_id}
     return None
+
+
+def posted_note(f) -> dict | None:
+    """The action recording that this finding's analysis was posted to GitLab (entries from p2 have no kind).
+    A copied analysis counts as posted when the finding it was copied from (or that one's source) was posted, so the
+    same analysis isn't commented twice."""
+    return _follow_copies(f, _own_posted_note)
+
+
+def fix_mr(f) -> dict | None:
+    """The action recording the fix merge request opened for this finding (entries before p6 have no kind).
+    Like `posted_note`, a copied analysis shares the merge request of the analysis it was copied from."""
+    return _follow_copies(f, _own_fix_mr)
 
 
 def issue_markdown(f, job, gitlab_url: str, marker: str) -> str:

@@ -788,6 +788,8 @@ def finding_json(f: Finding, job: AnalysisJob) -> dict:
         "context_files", "context_tokens", "error", "actions", "copied_from", "duration_s", "completion_tokens")}
     posted = prompts.posted_note(f)
     out["posted"] = posted and {k: posted.get(k) for k in ("url", "by", "at", "issue_iid", "copied_from_job")}
+    mr = prompts.fix_mr(f)
+    out["mr"] = mr and {k: mr.get(k) for k in ("url", "by", "at", "mr_iid", "copied_from_job")}
     out["gitlab_url"] = prompts.vulnerability_url(f, job, settings.gitlab_url)
     return out
 
@@ -904,8 +906,16 @@ def dismiss(fid: int, request: Request, user: User = Depends(current_user), db: 
 
 @app.post("/api/findings/{fid}/mr")
 def open_fix_mr(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Opens one merge request per finding; the row lock stops two quick clicks from both opening one."""
     check_csrf(request)
-    f = _finding_for(fid, user, db, act=True)
+    _finding_for(fid, user, db, act=True)
+    f = db.get(Finding, fid, with_for_update=True, populate_existing=True)
+    done = prompts.fix_mr(f)
+    if done:
+        iid = f" !{done['mr_iid']}" if done.get("mr_iid") else ""
+        src = f" from analysis #{done['copied_from_job']}" if done.get("copied_from_job") else ""
+        raise HTTPException(409, f"A fix merge request{iid} was already opened{src} by {done.get('by')} "
+                                 f"on {str(done.get('at', ''))[:10]}.")
     if not f.fix or not f.fix.get("edits"):
         raise HTTPException(409, "This finding has no proposed fix.")
     job = f.job
@@ -918,5 +928,5 @@ def open_fix_mr(fid: int, request: Request, user: User = Depends(current_user), 
         branch = f"vuln-fix/{job.sha[:8]}-{f.id}-{secrets.token_hex(2)}"
         title = f"Fix {f.title[:120]} in {f.file}"
         mr = gl.create_fix_mr(job.project_id, job.sha, job.branch, branch, changed, title, prompts.note_markdown(f))
-    _record(f, user, f"fix merge request !{mr['iid']}", mr["web_url"], db)
+    _record(f, user, f"fix merge request !{mr['iid']}", mr["web_url"], db, kind="mr", mr_iid=mr["iid"])
     return {"ok": True, "url": mr["web_url"], "iid": mr["iid"]}
