@@ -13,14 +13,13 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
-from . import prompts
+from . import gitlab_oauth, prompts
 from .config import settings
 from .context_builder import ContextBuilder, read_lines
 from .db import AnalysisJob, Finding, ProjectConfig, SessionLocal, User, utcnow
 from .gitlab_client import GitLabClient, GitLabError
 from .llm_client import BadReply, LLMClient, LLMError
 from .patcher import EditError, apply_edits, unified_diff, validate
-from .security import decrypt_token
 
 log = logging.getLogger(__name__)
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
@@ -162,7 +161,11 @@ class JobRunner:
         user: User = self.db.get(User, self.job.user_id)
         if not user.gitlab_token_enc:
             raise GitLabError("The user who started this analysis has no GitLab token in Settings.")
-        self.gl = GitLabClient(decrypt_token(user.gitlab_token_enc), user.gitlab_token_type)
+        try:  # a GitLab sign-in token is renewed now, and again whenever GitLab rejects it during a long analysis
+            token = gitlab_oauth.token_for(user.id)
+        except gitlab_oauth.OAuthError as exc:
+            raise GitLabError(str(exc), 401) from exc
+        self.gl = GitLabClient(token, user.gitlab_token_type, refresh=gitlab_oauth.refresher(user.id))
         self.thinking = self.job.thinking or "on"  # analyses from before the choice ran with the model's default
         self.llm = LLMClient(thinking=self.thinking == "on")
         self.budget = self.job.budget

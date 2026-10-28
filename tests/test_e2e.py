@@ -863,3 +863,155 @@ def test_code_budget_per_analysis(client, fake_services, monkeypatch):
     job = run(again)
     assert calls == [] and all(f["copied_from"]["job"] == big for f in job["findings"])
     client.post("/admin/llm/reset", data={"csrf": token})
+
+
+# ---------------------------------------------------------------- Sign in with GitLab
+def _gitlab_signin(fs, account: str, c=None):
+    """Signs `account` in through the fake GitLab; returns (client, callback response)."""
+    from urllib.parse import parse_qs, urlparse
+    from app.config import settings
+    from app.main import app
+    c = c or TestClient(app)
+    r = c.get("/login/gitlab", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith(settings.gitlab_url + "/oauth/authorize?")
+    params = {k: v[0] for k, v in parse_qs(urlparse(r.headers["location"]).query).items()}
+    code = fs.authorize(params, account)
+    return c, c.get("/login/gitlab/callback", params={"code": code, "state": params["state"]}, follow_redirects=False)
+
+
+def _user(username):
+    from sqlalchemy import select
+    from app.db import SessionLocal, User
+    with SessionLocal() as db:
+        return db.scalar(select(User).where(User.username == username))
+
+
+def test_gitlab_signin_setup(client, fake_services):
+    from app.main import app
+    anon = TestClient(app)
+    assert "Sign in with GitLab" not in anon.get("/login").text
+    assert anon.get("/login/gitlab", follow_redirects=False).status_code == 404
+    token = csrf(client, "/admin")
+    page = client.get("/admin").text
+    assert "GitLab sign-in" in page and "http://testserver/login/gitlab/callback" in page
+    r = client.post("/admin/gitlab-signin", data={"enabled": "1", "app_id": "app-id-123", "csrf": token})
+    assert "Enter the Application ID and secret" in r.text
+    r = client.post("/admin/gitlab-signin", data={"enabled": "1", "app_id": "app-id-123", "app_url": "not a url",
+                                                  "secret": "gloas-secret-456", "csrf": token})
+    assert "app address must look like" in r.text
+    r = client.post("/admin/gitlab-signin", data={"enabled": "1", "app_id": "app-id-123",
+                                                  "secret": "gloas-secret-456", "csrf": token})
+    assert "GitLab sign-in is on" in r.text and "gloas-secret-456" not in r.text
+    assert "A secret is saved" in r.text
+    r = client.post("/admin/gitlab-signin", data={"enabled": "1", "app_id": "app-id-123", "csrf": token})
+    assert "GitLab sign-in is on" in r.text  # a blank secret keeps the saved one
+    assert "Sign in with GitLab" in anon.get("/login").text
+
+
+def test_gitlab_signin_flow(client, fake_services):
+    from app.analyzer import JobRunner
+    from app.db import SessionLocal, User
+    from app.security import hash_password
+    from app.worker import _claim_next
+    fs = fake_services
+    c, r = _gitlab_signin(fs, "carol")
+    assert r.status_code == 200 and 'http-equiv="refresh" content="0;url=/"' in r.text
+    assert "vt_session" in r.headers.get("set-cookie", "")
+    carol = _user("carol")
+    assert carol.auth_source == "gitlab" and carol.gitlab_user_id == 3 and not carol.is_admin
+    assert carol.display_name == "Carol Jones" and carol.gitlab_token_type == "oauth" and carol.gitlab_refresh_enc
+    page = c.get("/settings").text
+    assert "through <em>Sign in with GitLab</em>" in page and "GitLab account" in page
+    # No token pasted, yet analyses work with the sign-in token.
+    h = {"X-CSRF-Token": csrf(c, "/")}
+    assert c.get("/api/projects").status_code == 200
+    _forget_results()
+    job = c.post("/api/jobs", headers=h, json={"project_id": 1, "project_path": "grp/app", "branch": "feature/login",
+                                               "sha": fs.SHA, "severities": ["high"]}).json()["id"]
+    assert _claim_next() == job
+    JobRunner(job).run()
+    assert c.get(f"/api/jobs/{job}").json()["status"] == "done"
+    # The password form and password sign-in don't apply to GitLab accounts.
+    r = c.post("/settings/password", data={"current": "x", "new": "y" * 12, "csrf": h["X-CSRF-Token"]})
+    assert "You sign in with GitLab" in r.text
+    anon = TestClient(client.app)
+    r = anon.post("/login", data={"username": "carol", "password": "anything-at-all", "csrf": csrf(anon, "/login")})
+    assert "Use Sign in with GitLab" in r.text
+    # Signing in again reuses the profile.
+    _gitlab_signin(fs, "carol")
+    assert _user("carol").id == carol.id
+
+    # A Windows profile with the same username is reused; a local account never is.
+    with SessionLocal() as db:
+        db.add(User(username="erin", password_hash="windows", auth_source="ldap"))
+        db.add(User(username="localdup", password_hash=hash_password("a-long-password-1")))
+        db.commit()
+    erin_id = _user("erin").id
+    _, r = _gitlab_signin(fs, "erin")
+    erin = _user("erin")
+    assert r.status_code == 200 and erin.id == erin_id and erin.auth_source == "ldap" and erin.gitlab_user_id == 5
+    c2, r = _gitlab_signin(fs, "localdup")
+    assert r.status_code == 400 and "local account with this username" in r.text
+    assert _user("localdup").gitlab_user_id is None
+    _, r = _gitlab_signin(fs, "frank")
+    assert r.status_code == 400 and "account isn" in r.text and _user("frank") is None
+
+
+def test_gitlab_signin_rejects_bad_state(client, fake_services):
+    from urllib.parse import parse_qs, urlparse
+    fs = fake_services
+    c = TestClient(client.app)
+    r = c.get("/login/gitlab", follow_redirects=False)
+    params = {k: v[0] for k, v in parse_qs(urlparse(r.headers["location"]).query).items()}
+    code = fs.authorize(params, "carol")
+    r = c.get("/login/gitlab/callback", params={"code": code, "state": "forged"}, follow_redirects=False)
+    assert r.status_code == 400 and "start here" in r.text
+    other = TestClient(client.app)  # a browser that never started the sign-in
+    r = other.get("/login/gitlab/callback", params={"code": code, "state": params["state"]}, follow_redirects=False)
+    assert r.status_code == 400 and "start here" in r.text
+    r = c.get("/login/gitlab/callback", params={"error": "access_denied", "error_description": "The user denied"},
+              follow_redirects=False)
+    assert r.status_code == 400 and "cancelled" in r.text
+
+
+def test_gitlab_token_renewal(client, fake_services):
+    from datetime import timedelta
+    from app.analyzer import JobRunner
+    from app.db import SessionLocal, User, utcnow
+    from app.security import decrypt_token
+    from app.worker import _claim_next
+    fs = fake_services
+    c, _ = _gitlab_signin(fs, "carol")
+    uid = _user("carol").id
+
+    def token():
+        return decrypt_token(_user("carol").gitlab_token_enc)
+
+    # About to expire: renewed before use.
+    first = token()
+    with SessionLocal() as db:
+        db.get(User, uid).gitlab_token_expires_at = utcnow() + timedelta(minutes=1)
+        db.commit()
+    fs.oauth["token_calls"].clear()
+    assert c.get("/api/projects").status_code == 200
+    assert fs.oauth["token_calls"] == ["refresh_token"] and token() != first and first not in fs.USERS
+
+    # Rejected mid-way (e.g. an analysis running for hours): renewed and the request repeated.
+    h = {"X-CSRF-Token": csrf(c, "/")}
+    _forget_results()
+    job = c.post("/api/jobs", headers=h, json={"project_id": 1, "project_path": "grp/app", "branch": "feature/login",
+                                               "sha": fs.SHA, "severities": ["high"]}).json()["id"]
+    assert _claim_next() == job
+    runner = JobRunner(job)
+    fs.revoke(token())
+    fs.oauth["token_calls"].clear()
+    runner.run()
+    assert c.get(f"/api/jobs/{job}").json()["status"] == "done" and fs.oauth["token_calls"] == ["refresh_token"]
+
+    # Revoked in GitLab: the token is cleared and the user is asked to sign in again.
+    fs.revoke(token())
+    fs.oauth["refresh"].clear()
+    r = c.get("/api/projects")
+    assert r.status_code in (400, 401) and "sign in with GitLab again" in r.text
+    assert _user("carol").gitlab_token_enc is None
+    assert "Not connected" in c.get("/settings").text

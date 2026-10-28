@@ -51,7 +51,7 @@ Nothing is dismissed, merged or posted automatically, and nothing contacts the i
 | 👤 **Your permissions, your name** | Every GitLab call uses the acting user's encrypted token; every action is audited. |
 | 🛡️ **Prompt-injection aware** | Code containing text addressed to an AI or reviewer is flagged. Prompts and responses are kept for audit. |
 | 📊 **Excel reports** | Summary and per-finding sheets with verdicts, fixes, issues, MRs and who posted what. |
-| 🏢 **Enterprise sign-in** | Active Directory (LDAP/LDAPS) with group-based access and admin roles, or local accounts. |
+| 🏢 **Enterprise sign-in** | Sign in with GitLab (no tokens to set up), Active Directory (LDAP/LDAPS) with group-based access and admin roles, or local accounts. |
 
 ## How it works
 

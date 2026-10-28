@@ -21,6 +21,11 @@ class Settings:
     gitlab_url: str = os.getenv("VT_GITLAB_URL", "https://gitlab.internal").rstrip("/")
     # Path to the internal CA bundle, or "false" to disable TLS verification (not recommended).
     ca_bundle: str = os.getenv("VT_CA_BUNDLE", "")
+    # "Sign in with GitLab": the OAuth application registered in GitLab (also settable on the Admin page).
+    gitlab_oauth_id: str = os.getenv("VT_GITLAB_OAUTH_ID", "")
+    gitlab_oauth_secret: str = os.getenv("VT_GITLAB_OAUTH_SECRET", "")
+    # This app's address as users open it, e.g. https://securefix.internal. Empty: taken from each request.
+    public_url: str = os.getenv("VT_PUBLIC_URL", "").rstrip("/")
 
     # Local vLLM server (OpenAI-compatible API).
     llm_base_url: str = os.getenv("VT_LLM_BASE_URL", "http://vllm.internal:8000/v1").rstrip("/")

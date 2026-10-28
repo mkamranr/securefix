@@ -8,6 +8,8 @@ the full list. Some model settings can also be changed by administrators on the 
 | Variable | Purpose |
 | --- | --- |
 | `VT_GITLAB_URL` | Base URL of the self-hosted GitLab |
+| `VT_GITLAB_OAUTH_ID`, `VT_GITLAB_OAUTH_SECRET` | Optional defaults for [GitLab sign-in](#gitlab-sign-in); usually set on the Admin page instead |
+| `VT_PUBLIC_URL` | The app's address as users open it, e.g. `https://securefix.internal`. Only needed when the callback URL the Admin page shows is wrong |
 | `VT_LLM_BASE_URL`, `VT_LLM_MODEL` | vLLM endpoint and served model name. These and the other `VT_LLM_*` values are defaults (see [Model settings](#model-settings-admin-page)) |
 | `VT_LLM_API_KEY` | API key for vLLM, if it requires one |
 | `VT_LLM_STRUCTURED_OUTPUT` | `true` to request `response_format: json_schema` from vLLM |
@@ -38,9 +40,38 @@ model's thinking) must fit vLLM's `--max-model-len`. For example, with a 128K wi
 *Max tokens per reply* is 16,384. Each analysis records the budget it used, shown in its header, in History and in
 the Excel report.
 
+## GitLab sign-in
+
+With GitLab sign-in, users sign in with their GitLab account (which can itself be their AD account), and the app
+gets their GitLab token from the sign-in. Nobody creates or pastes a token. Windows and local sign-in keep working
+alongside it.
+
+1. In GitLab, as an administrator, open **Admin › Applications › New application**.
+2. Name it *SecureFix*. Set the **Redirect URI** to the callback URL shown under **Admin › GitLab sign-in** in this
+   app, e.g. `https://securefix.internal/login/gitlab/callback`.
+3. Tick **Trusted** (users aren't asked to approve the app) and **Confidential**, and the scopes `api` and
+   `read_repository`.
+4. Save, then enter the **Application ID** and **Secret** under **Admin › GitLab sign-in**, tick
+   **Allow GitLab sign-in** and save. The login page now shows **Sign in with GitLab**.
+
+How accounts are matched:
+
+- The first GitLab sign-in creates a profile with the GitLab username. It is a normal user; administrators set roles
+  on the Admin page.
+- If a **Windows** profile with the same username exists, it is reused, so the person keeps their analyses and role.
+- A **local** account with the same username is never linked, because that would let a GitLab account take it
+  over. Rename or delete the local account first.
+- Blocked GitLab accounts can't sign in.
+
+GitLab's OAuth tokens expire after two hours. The app renews them automatically with the refresh token, including
+during long analyses. If the token was revoked in GitLab, the user is asked to sign in with GitLab again.
+
+If the redirect URI shown on the Admin page isn't the address users open (for example behind a proxy that doesn't
+pass the original host), set **App address** there or `VT_PUBLIC_URL`.
+
 ## GitLab tokens
 
-Each user saves their own token on the **Settings** page.
+Users who sign in with GitLab don't need one. Everyone else saves their own token on the **Settings** page.
 
 - `read_api` + `read_repository`: analyze commits.
 - `api`: also create and comment on issues, open fix merge requests and dismiss findings.

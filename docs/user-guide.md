@@ -1,6 +1,10 @@
 # User guide
 
 ## 1. Sign in
+If an administrator has turned on GitLab sign-in, choose **Sign in with GitLab**. You sign in on GitLab as usual
+(with your AD account if GitLab uses it) and come back signed in. There is nothing to set up: the app uses your
+GitLab account directly, and step 2 below is already done.
+
 Sign in with a **Windows (Active Directory)** account once an administrator has set up Windows sign-in, or with a
 **local account** an administrator created. The first account created on a fresh install becomes the administrator.
 There is no self-registration after that.
@@ -9,6 +13,8 @@ Windows users get a profile on their first sign-in. Their password stays in Acti
 changed or reset in the app. They can sign in as `jdoe`, `CORP\jdoe` or `jdoe@corp.example.com`.
 
 ## 2. Connect GitLab (Settings)
+*Not needed if you signed in with GitLab: Settings shows "Connected through Sign in with GitLab".*
+
 Save a GitLab token: a personal, project or group access token, or an OAuth token. It is checked against GitLab,
 then stored encrypted, and it is never shown again.
 

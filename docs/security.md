@@ -11,10 +11,16 @@ inside your network and under people's control.
 - **GitLab tokens** are encrypted at rest (Fernet, with a key derived from `VT_SECRET_KEY` or `data/secret.key`) and
   never shown again after saving. Every GitLab call uses the acting user's token, so GitLab enforces that user's
   permissions. During checkout the token is passed per git command and never written to disk.
+- **GitLab sign-in** uses the OAuth 2 authorization code flow with PKCE (S256) and a random `state`, both kept in a
+  short-lived encrypted cookie that only the callback reads. The access and refresh tokens are encrypted like pasted
+  tokens. Refresh tokens rotate on every renewal, and renewals are serialized with a database row lock. A revoked
+  token is cleared rather than retried. A GitLab account is linked to an existing Windows profile by username, never
+  to a local account. The application secret is encrypted at rest.
 - **Local passwords** are hashed with scrypt.
 - **Windows passwords** are only sent to the directory. An empty password is always rejected, so a sign-in can't
   turn into an anonymous bind.
-- The **vLLM API key** and the **LDAP service account password** are encrypted at rest like GitLab tokens.
+- The **vLLM API key**, the **LDAP service account password** and the **GitLab application secret** are encrypted at
+  rest like GitLab tokens.
 
 ## Web application
 - Forms and API calls are CSRF-protected, and cookies are `SameSite=Strict`.

@@ -27,7 +27,12 @@ class User(Base):
     # "oauth": OAuth access token (Authorization: Bearer).
     gitlab_token_type: Mapped[str] = mapped_column(String(20), default="access_token")
     gitlab_username: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Set by "Sign in with GitLab": the GitLab account, and the refresh token that renews the OAuth access token.
+    gitlab_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    gitlab_refresh_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gitlab_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # "local": password kept here. "ldap": Windows (Active Directory) account; the directory checks the password.
+    # "gitlab": signs in with GitLab only.
     auth_source: Mapped[str] = mapped_column(String(20), default="local")
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -37,6 +42,14 @@ class User(Base):
     @property
     def is_windows(self) -> bool:
         return self.auth_source == "ldap"
+
+    @property
+    def is_gitlab(self) -> bool:
+        return self.auth_source == "gitlab"
+
+    @property
+    def has_password(self) -> bool:
+        return self.auth_source == "local"
 
     @property
     def initials(self) -> str:
@@ -155,7 +168,8 @@ _ADDED_COLUMNS = {
     "findings": {"code_key": "VARCHAR(64) NOT NULL DEFAULT ''", "copied_from": "JSON", "duration_s": "FLOAT",
                  "completion_tokens": "INTEGER"},
     "users": {"auth_source": "VARCHAR(20) NOT NULL DEFAULT 'local'", "display_name": "VARCHAR(200)",
-              "email": "VARCHAR(200)", "last_login_at": "TIMESTAMP WITH TIME ZONE"},
+              "email": "VARCHAR(200)", "last_login_at": "TIMESTAMP WITH TIME ZONE", "gitlab_user_id": "INTEGER",
+              "gitlab_refresh_enc": "TEXT", "gitlab_token_expires_at": "TIMESTAMP WITH TIME ZONE"},
 }
 
 

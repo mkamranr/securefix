@@ -123,7 +123,15 @@ button.link:hover:not(:disabled), button.danger-link:hover:not(:disabled) { back
 button.danger-link { color: var(--real); }
 button.danger-link:hover:not(:disabled) { color: #ff8a83; }
 button.icon-btn { padding: 0; width: 38px; height: 38px; flex: none; }
-button.full { width: 100%; padding: 0.7rem 1rem; }
+button.full, .button.full { width: 100%; padding: 0.7rem 1rem; }
+.button.full { display: flex; justify-content: center; align-items: center; gap: 0.5rem; text-decoration: none; box-sizing: border-box; }
+.gitlab-signin .i { width: 18px; height: 18px; }
+.divider { display: flex; align-items: center; gap: 0.75rem; color: var(--muted); font-size: 0.82rem; margin: 1.1rem 0; }
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.setup-steps { margin: 0 0 1rem; padding-left: 1.3rem; color: var(--ink-2); line-height: 1.7; }
+.setup-steps code { overflow-wrap: anywhere; }
+.token-alt { margin-top: 0.75rem; }
+.token-alt summary { cursor: pointer; color: var(--muted); margin-bottom: 0.75rem; }
 input, select, textarea { font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm); padding: 0.55rem 0.7rem; width: 100%; transition: border-color 0.12s, box-shadow 0.12s; }
 select { appearance: none; padding-right: 2.2rem; cursor: pointer;
@@ -189,6 +197,7 @@ li.error { list-style: none; }
 .badge .i { width: 14px; height: 14px; }
 .badge-admin, .badge-selected { background: var(--accent-soft); color: #7fb0ff; }
 .badge-windows { background: rgba(77, 163, 255, 0.14); color: #8cc5ff; }
+.badge-gitlab { background: rgba(252, 109, 38, 0.16); color: #ffa36e; }
 .badge-on, .badge-ok { background: rgba(47, 196, 119, 0.16); color: #5fdc9a; }
 .badge-bad { background: var(--real-bg); color: #ff8a83; }
 .badge-warn { background: var(--review-bg); color: #f8c771; }

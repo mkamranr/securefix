@@ -24,7 +24,7 @@
           <div class="menu-head">
             <b>{{ user.display_name or user.username }}</b>
             <span>{{ user.username }}{% if user.email %} · {{ user.email }}{% endif %}</span>
-            <span class="menu-badges">{% if user.is_admin %}<span class="badge badge-admin">Administrator</span>{% endif %}{% if user.is_windows %}<span class="badge badge-windows">Windows account</span>{% else %}<span class="badge">Local account</span>{% endif %}</span>
+            <span class="menu-badges">{% if user.is_admin %}<span class="badge badge-admin">Administrator</span>{% endif %}{% if user.is_windows %}<span class="badge badge-windows">Windows account</span>{% elif user.is_gitlab %}<span class="badge badge-gitlab">GitLab account</span>{% else %}<span class="badge">Local account</span>{% endif %}</span>
           </div>
           <a href="/settings">{{ icon('settings') }} Settings</a>
           <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button>{{ icon('logout') }} Sign out</button></form>

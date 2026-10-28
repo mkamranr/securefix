@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import ldap_auth, prompts, report, worker
+from . import gitlab_oauth, ldap_auth, prompts, report, worker
 from .analyzer import DEFAULT_SEVERITIES, SEVERITIES
 from .config import settings
 from .db import AnalysisJob, Finding, ProjectConfig, User, get_db, init_db, utcnow
@@ -102,9 +102,10 @@ def admin_user(user: User = Depends(current_user)) -> User:
 def gitlab_for(user: User) -> GitLabClient:
     if not user.gitlab_token_enc:
         raise HTTPException(400, "Add your GitLab token in Settings first.")
-    try:
-        return GitLabClient(decrypt_token(user.gitlab_token_enc), user.gitlab_token_type)
-    except ValueError as exc:
+    try:  # a GitLab sign-in token is renewed here when it is about to expire
+        return GitLabClient(gitlab_oauth.token_for(user.id), user.gitlab_token_type,
+                            refresh=gitlab_oauth.refresher(user.id))
+    except (ValueError, gitlab_oauth.OAuthError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
 
@@ -132,7 +133,8 @@ def _first_run(db: Session) -> bool:
 def login_page(request: Request, db: Session = Depends(get_db)):
     if _first_run(db):  # the only self-service account: the first administrator
         return RedirectResponse("/register", status_code=303)
-    return render(request, "auth.html", None, mode="login", windows=ldap_auth.is_enabled(db))
+    return render(request, "auth.html", None, mode="login", windows=ldap_auth.is_enabled(db),
+                  gitlab_signin=gitlab_oauth.is_enabled(db))
 
 
 @app.post("/login")
@@ -143,9 +145,12 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     windows = ldap_auth.is_enabled(db)
 
     def fail(message: str = "Username or password is wrong."):
-        return render(request, "auth.html", None, mode="login", error=message, windows=windows, username=raw)
+        return render(request, "auth.html", None, mode="login", error=message, windows=windows, username=raw,
+                      gitlab_signin=gitlab_oauth.is_enabled(db))
 
     user = db.scalar(select(User).where(User.username == raw.lower()))
+    if user and user.is_gitlab:
+        return fail("This account signs in with GitLab. Use Sign in with GitLab.")
     if user and not user.is_windows:
         if not verify_password(password, user.password_hash):
             return fail()
@@ -172,6 +177,79 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     request.session.clear()
     request.session["uid"] = user.id
     return RedirectResponse("/" if user.gitlab_token_enc else "/settings", status_code=303)
+
+
+def _signed_in_page(target: str) -> HTMLResponse:
+    """GitLab sends the browser back cross-site, so the SameSite=Strict session cookie set now would not reach a
+    redirect in the same chain. A same-site hop through this page lets it through."""
+    return HTMLResponse(f'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={target}">'
+                        f'<title>Signing in · SecureFix</title><p>Signing you in… <a href="{target}">Continue</a></p>')
+
+
+@app.get("/login/gitlab")
+def gitlab_signin(request: Request, db: Session = Depends(get_db)):
+    if not gitlab_oauth.is_enabled(db):
+        raise HTTPException(404, "Sign in with GitLab isn't set up.")
+    cfg = gitlab_oauth.oauth_config(db)
+    url, sealed = gitlab_oauth.start(cfg, gitlab_oauth.redirect_uri(cfg, str(request.base_url)))
+    r = RedirectResponse(url, status_code=303)
+    r.set_cookie("vt_oauth", sealed, max_age=gitlab_oauth.FLOW_TTL_S, httponly=True, samesite="lax",
+                 secure=settings.session_cookie_secure, path="/login/gitlab")
+    return r
+
+
+@app.get(gitlab_oauth.CALLBACK_PATH)
+def gitlab_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                    error_description: str = "", db: Session = Depends(get_db)):
+    def fail(message: str):  # shown here rather than passed in a URL, so no one can craft the message
+        r = render(request, "auth.html", None, mode="login", error=message, windows=ldap_auth.is_enabled(db),
+                   gitlab_signin=gitlab_oauth.is_enabled(db))
+        r.status_code = 400
+        r.delete_cookie("vt_oauth", path="/login/gitlab")
+        return r
+
+    if not gitlab_oauth.is_enabled(db):
+        raise HTTPException(404, "Sign in with GitLab isn't set up.")
+    if error:  # e.g. the user chose Deny in GitLab
+        return fail(f"GitLab sign-in was cancelled ({error_description or error}).")
+    cfg = gitlab_oauth.oauth_config(db)
+    callback = gitlab_oauth.redirect_uri(cfg, str(request.base_url))
+    try:
+        verifier = gitlab_oauth.verifier_for(request.cookies.get("vt_oauth"), state)
+        tokens = gitlab_oauth.exchange_code(cfg, code, verifier, callback)
+        with GitLabClient(tokens["access_token"], "oauth") as gl:
+            me = gl.current_user()
+    except (gitlab_oauth.OAuthError, GitLabError) as exc:
+        return fail(str(exc))
+    if me.get("state", "active") != "active":
+        return fail("Your GitLab account isn't active.")
+    username = str(me.get("username") or "").lower()
+    user = db.scalar(select(User).where(User.gitlab_user_id == me["id"], User.password_hash != "disabled"))
+    if user is None:
+        user = db.scalar(select(User).where(User.username == username))
+        if user and not user.is_windows:
+            # Linking a local account by name would let whoever owns that GitLab name take it over.
+            return fail("A local account with this username already exists, so GitLab sign-in can't use it. "
+                        "Ask an administrator.")
+        if user is None:
+            if not re.fullmatch(USERNAME_RE, username):
+                return fail("Your GitLab username can't be used here. Ask an administrator.")
+            user = User(username=username, password_hash="gitlab", auth_source="gitlab", is_admin=False)
+            db.add(user)
+            log.info("Created a profile for GitLab user %s (id %s)", username, me["id"])
+    user.gitlab_user_id = me["id"]
+    user.gitlab_username = me.get("username")
+    user.display_name = me.get("name") or user.display_name
+    user.email = me.get("email") or me.get("public_email") or user.email
+    gitlab_oauth.store_tokens(user, tokens)
+    user.last_login_at = utcnow()
+    db.commit()
+    _forget_access(user.id)
+    request.session.clear()
+    request.session["uid"] = user.id
+    r = _signed_in_page("/")
+    r.delete_cookie("vt_oauth", path="/login/gitlab")
+    return r
 
 
 @app.get("/register", response_class=HTMLResponse)
@@ -213,14 +291,16 @@ def logout(request: Request, csrf: str = Form("")):
 
 # ------------------------------------------------------------------ settings
 @app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, user: User = Depends(current_user), saved: str = "", error: str = ""):
+def settings_page(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db),
+                  saved: str = "", error: str = ""):
     masked = None
     if user.gitlab_token_enc:
         try:
             masked = mask_token(decrypt_token(user.gitlab_token_enc))
         except ValueError:
             masked = "unreadable — enter it again"
-    return render(request, "settings.html", user, masked=masked, saved=saved, error=error)
+    return render(request, "settings.html", user, masked=masked, saved=saved, error=error,
+                  gitlab_signin=gitlab_oauth.is_enabled(db))
 
 
 @app.post("/settings/token")
@@ -239,6 +319,7 @@ def save_token(request: Request, token: str = Form(...), token_type: str = Form(
         return back_to_settings(error="The token needs the read_api scope (api to write back to GitLab).")
     user.gitlab_token_enc = encrypt_token(token)
     user.gitlab_token_type = token_type
+    user.gitlab_refresh_enc = user.gitlab_token_expires_at = None  # a pasted token replaces a GitLab sign-in token
     user.gitlab_username = me.get("username")
     db.commit()
     _forget_access(user.id)  # project roles are checked again with the new token
@@ -251,6 +332,7 @@ def delete_token(request: Request, csrf: str = Form(""), user: User = Depends(cu
                  db: Session = Depends(get_db)):
     check_csrf(request, csrf)
     user.gitlab_token_enc, user.gitlab_username = None, None
+    user.gitlab_refresh_enc = user.gitlab_token_expires_at = None
     db.commit()
     _forget_access(user.id)
     return back_to_settings(saved="Token removed.")
@@ -262,6 +344,8 @@ def change_password(request: Request, current: str = Form(...), new: str = Form(
     check_csrf(request, csrf)
     if user.is_windows:
         return back_to_settings(error="You sign in with your Windows account; change its password in Windows.")
+    if user.is_gitlab:
+        return back_to_settings(error="You sign in with GitLab; change your password there.")
     if not verify_password(current, user.password_hash):
         return back_to_settings(error="Your current password is wrong.")
     if len(new) < 12:
@@ -282,7 +366,10 @@ def admin_page(request: Request, user: User = Depends(admin_user), db: Session =
            "overridden": bool(llm_overrides(db))}
     ldap = ldap_auth.ldap_config(db)
     ldap = {**ldap, "has_bind_password": bool(ldap["bind_password"]), "bind_password": None}
-    return render(request, "admin.html", user, users=users, configs=configs, llm=llm, ldap=ldap,
+    oauth = gitlab_oauth.oauth_config(db)
+    oauth = {**oauth, "has_secret": bool(oauth["secret"]), "secret": None, "ready": gitlab_oauth.is_enabled(db),
+             "callback": gitlab_oauth.redirect_uri(oauth, str(request.base_url))}
+    return render(request, "admin.html", user, users=users, configs=configs, llm=llm, ldap=ldap, oauth=oauth,
                   saved=saved, error=error, section=section)
 
 
@@ -366,6 +453,23 @@ def save_ldap(request: Request, enabled: str = Form(""), server_url: str = Form(
     return back_to_admin("windows", saved=f"Windows sign-in settings saved. Windows sign-in is {state}.")
 
 
+@app.post("/admin/gitlab-signin")
+def save_gitlab_signin(request: Request, enabled: str = Form(""), app_id: str = Form(""), secret: str = Form(""),
+                       app_url: str = Form(""), csrf: str = Form(""), user: User = Depends(admin_user),
+                       db: Session = Depends(get_db)):
+    check_csrf(request, csrf)
+    app_id, app_url = app_id.strip(), app_url.strip().rstrip("/")
+    if app_url and not re.fullmatch(r"https?://[^\s/?#]+(/[^\s?#]*)?", app_url):
+        return back_to_admin("gitlab", error="The app address must look like https://securefix.internal.")
+    has_secret = bool(secret.strip() or gitlab_oauth.oauth_config(db)["secret"])
+    if enabled and not (app_id and has_secret):
+        return back_to_admin("gitlab", error="Enter the Application ID and secret from GitLab to turn GitLab sign-in on.")
+    gitlab_oauth.save_oauth_config(db, bool(enabled), app_id, app_url, secret.strip() or None)
+    log.info("%s changed the GitLab sign-in settings (enabled=%s)", user.username, bool(enabled))
+    state = "on" if enabled else "off"
+    return back_to_admin("gitlab", saved=f"GitLab sign-in settings saved. GitLab sign-in is {state}.")
+
+
 @app.post("/admin/ldap/test")
 def test_ldap(request: Request, lookup: str = Form(""), csrf: str = Form(""), user: User = Depends(admin_user),
               db: Session = Depends(get_db)):
@@ -416,7 +520,7 @@ def delete_user(uid: int, request: Request, csrf: str = Form(""), user: User = D
     target = db.get(User, uid)
     if target and target.id != user.id:
         name = target.username
-        target.gitlab_token_enc = None
+        target.gitlab_token_enc = target.gitlab_refresh_enc = target.gitlab_user_id = None
         target.password_hash = "disabled"
         target.username = f"deleted-{target.id}-{target.username}"[:80]
         db.commit()

@@ -1,14 +1,23 @@
 """Minimal fake GitLab and vLLM servers for offline end-to-end tests."""
 import asyncio
+import base64
+import hashlib
 import json
+import secrets
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import JSONResponse
 
 TOKEN = "glpat-test-token-1234"
 BOB_TOKEN = "glpat-bob-token-5678"
 USERS = {TOKEN: {"id": 1, "username": "alice"}, BOB_TOKEN: {"id": 2, "username": "bob"}}
 ACCESS = {TOKEN: 40, BOB_TOKEN: 30}  # role on project 1 per token (30 = Developer); tests may change it
+# GitLab accounts that can "Sign in with GitLab" (they get OAuth tokens from /oauth/token).
+ACCOUNTS = {"carol": {"id": 3, "username": "carol", "name": "Carol Jones", "email": "carol@corp.test", "state": "active"},
+            "erin": {"id": 5, "username": "erin", "name": "Erin Wu", "email": "erin@corp.test", "state": "active"},
+            "localdup": {"id": 6, "username": "localdup", "name": "Not the local account", "state": "active"},
+            "frank": {"id": 7, "username": "frank", "name": "Frank", "state": "blocked"}}
+OAUTH_APP = {"id": "app-id-123", "secret": "gloas-secret-456"}
 SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 REPORT = {
     "version": "15.0.0",
@@ -33,16 +42,23 @@ gitlab = FastAPI()
 calls = []
 
 
+def _token(request: Request) -> str | None:
+    bearer = request.headers.get("authorization", "")
+    return bearer.removeprefix("Bearer ") if bearer.startswith("Bearer ") else request.headers.get("private-token")
+
+
 @gitlab.middleware("http")
 async def auth(request: Request, call_next):
-    if request.headers.get("private-token") not in USERS:
+    if request.url.path.startswith("/oauth/"):
+        return await call_next(request)
+    if _token(request) not in USERS:
         return JSONResponse({"message": "401 Unauthorized"}, status_code=401)
     calls.append((request.method, request.url.path))
     return await call_next(request)
 
 
 @gitlab.get("/api/v4/user")
-def user(request: Request): return USERS[request.headers["private-token"]]
+def user(request: Request): return USERS[_token(request)]
 
 
 @gitlab.get("/api/v4/personal_access_tokens/self")
@@ -59,7 +75,7 @@ def projects(): return [PROJECT]
 
 @gitlab.get("/api/v4/projects/1")
 def project(request: Request):
-    level = ACCESS[request.headers["private-token"]]
+    level = ACCESS[_token(request)]
     return {**PROJECT, "permissions": {"project_access": {"access_level": level} if level else None, "group_access": None}}
 
 
@@ -146,6 +162,50 @@ async def graphql(request: Request):
                        "vulnerability": None, "location": {"file": "app.py", "startLine": 7, "endLine": 7},
                        "identifiers": [{"externalType": "cwe", "name": "CWE-89"}]}]}}}}}
     return {"errors": [{"message": "unexpected query"}]}
+
+
+# ---- OAuth provider. authorize() stands in for the user signing in on GitLab's page and approving.
+oauth = {"codes": {}, "refresh": {}, "expires_in": 7200, "token_calls": []}
+
+
+def authorize(params: dict, account: str) -> str:
+    assert params["client_id"] == OAUTH_APP["id"] and params["response_type"] == "code"
+    assert params["scope"] == "api read_repository" and params["code_challenge_method"] == "S256"
+    code = secrets.token_urlsafe(8)
+    oauth["codes"][code] = (account, params["code_challenge"], params["redirect_uri"])
+    return code
+
+
+def _issue(account: str) -> dict:
+    access, refresh = "gloat-" + secrets.token_urlsafe(8), "glort-" + secrets.token_urlsafe(8)
+    USERS[access] = ACCOUNTS[account]
+    ACCESS[access] = 30
+    oauth["refresh"][refresh] = (account, access)
+    return {"access_token": access, "refresh_token": refresh, "token_type": "Bearer",
+            "expires_in": oauth["expires_in"], "created_at": 0}
+
+
+def revoke(access: str):
+    USERS.pop(access, None)
+
+
+@gitlab.post("/oauth/token")
+def token(grant_type: str = Form(...), client_id: str = Form(""), client_secret: str = Form(""), code: str = Form(""),
+          code_verifier: str = Form(""), redirect_uri: str = Form(""), refresh_token: str = Form("")):
+    oauth["token_calls"].append(grant_type)
+    if (client_id, client_secret) != (OAUTH_APP["id"], OAUTH_APP["secret"]):
+        return JSONResponse({"error": "invalid_client"}, status_code=401)
+    if grant_type == "authorization_code":
+        account, challenge, redirect = oauth["codes"].pop(code, (None, None, None))
+        expected = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).rstrip(b"=").decode()
+        if account is None or expected != challenge or redirect != redirect_uri:
+            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        return _issue(account)
+    if grant_type == "refresh_token" and refresh_token in oauth["refresh"]:
+        account, old_access = oauth["refresh"].pop(refresh_token)  # GitLab rotates both tokens
+        revoke(old_access)
+        return _issue(account)
+    return JSONResponse({"error": "invalid_grant"}, status_code=400)
 
 
 gitlab.state = {}

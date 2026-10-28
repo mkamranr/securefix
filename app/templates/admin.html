@@ -11,6 +11,7 @@
 <div class="admin-layout">
   <nav class="subnav" aria-label="Admin sections">
     <a href="#model" class="{{ 'active' if section in ('', 'model') }}">Local model</a>
+    <a href="#gitlab" class="{{ 'active' if section == 'gitlab' }}">GitLab sign-in</a>
     <a href="#windows" class="{{ 'active' if section == 'windows' }}">Windows sign-in</a>
     <a href="#users" class="{{ 'active' if section == 'users' }}">Users</a>
     <a href="#validation" class="{{ 'active' if section == 'validation' }}">Fix validation</a>
@@ -65,6 +66,31 @@
       {% endif %}
     </section>
 
+    <section class="panel" id="gitlab">
+      <div class="panel-head">
+        <div>
+          <h2>GitLab sign-in</h2>
+          <p>Lets people sign in with their GitLab account. The app gets their GitLab token from the sign-in and renews it automatically, so they don't create or paste one. Their profile is created on first sign-in; a Windows profile with the same username is reused.</p>
+        </div>
+        {% if oauth.ready %}<span class="badge badge-on">On</span>{% else %}<span class="badge">Off</span>{% endif %}
+      </div>
+      <ol class="setup-steps">
+        <li>In GitLab, open <a href="{{ gitlab_url }}/admin/applications/new">Admin › Applications › New application</a> (as a GitLab administrator).</li>
+        <li>Name it <em>SecureFix</em>, and set the redirect URI to <code class="copy" id="oauth-callback">{{ oauth.callback }}</code>.</li>
+        <li>Tick <em>Trusted</em> (no extra consent screen) and <em>Confidential</em>, and the scopes <code>api</code> and <code>read_repository</code>.</li>
+        <li>Save, then copy the Application ID and secret here.</li>
+      </ol>
+      <form method="post" action="/admin/gitlab-signin" class="form-grid">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="check span-2"><input type="checkbox" name="enabled" value="1" {% if oauth.enabled %}checked{% endif %}> Allow GitLab sign-in</label>
+        <label>Application ID <input name="app_id" value="{{ oauth.app_id }}" autocomplete="off" spellcheck="false"></label>
+        <label>Secret <input name="secret" type="password" autocomplete="new-password" placeholder="{{ 'A secret is saved; leave blank to keep it' if oauth.has_secret else '' }}"></label>
+        <label class="span-2">App address (optional) <input name="app_url" value="{{ oauth.app_url }}" placeholder="https://securefix.internal">
+          <span class="hint">How users open this app. Only needed when the redirect URI above isn't the address users use (for example behind a proxy).</span></label>
+        <div class="form-actions span-2"><button class="primary">Save GitLab sign-in settings</button></div>
+      </form>
+    </section>
+
     <section class="panel" id="windows">
       <div class="panel-head">
         <div>
@@ -112,7 +138,7 @@
       <div class="panel-head">
         <div>
           <h2>Users</h2>
-          <p>Windows users appear here after their first sign-in. Local accounts are for people without a Windows account.</p>
+          <p>GitLab and Windows users appear here after their first sign-in. Local accounts are for people who can use neither.</p>
         </div>
       </div>
       <div class="table-wrap">
@@ -122,7 +148,7 @@
         {% for u in users %}
           <tr>
             <td><strong>{{ u.username }}</strong>{% if u.display_name %}<br><span class="sub">{{ u.display_name }}</span>{% endif %}</td>
-            <td>{% if u.is_windows %}<span class="badge badge-windows">Windows</span>{% else %}<span class="badge">Local</span>{% endif %}</td>
+            <td>{% if u.is_windows %}<span class="badge badge-windows">Windows</span>{% elif u.is_gitlab %}<span class="badge badge-gitlab">GitLab</span>{% else %}<span class="badge">Local</span>{% endif %}{% if u.gitlab_user_id and not u.is_gitlab %} <span class="badge badge-gitlab" title="Also signs in with GitLab">GitLab</span>{% endif %}</td>
             <td>{% if u.is_admin %}<span class="badge badge-admin">Administrator</span>{% else %}User{% endif %}</td>
             <td>{{ u.gitlab_username or '—' }}</td>
             <td>{{ (u.last_login_at | ago) or '—' }}</td>
@@ -136,7 +162,7 @@
       </table>
       </div>
       {% if ldap.admin_group %}<p class="hint">An admin group is set for Windows sign-in, so a Windows user's role is reset from that group at each sign-in.</p>{% endif %}
-      <p class="hint">Deleting a Windows user removes their profile; if the directory still allows them, a new profile is created when they sign in again. Use the allowed group to control access.</p>
+      <p class="hint">Deleting a GitLab or Windows user removes their profile; if GitLab or the directory still allows them, a new profile is created when they sign in again. Block them in GitLab, or use the allowed group, to keep them out.</p>
       <form method="post" action="/admin/users" class="project-config">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <h3>Add a local account</h3>

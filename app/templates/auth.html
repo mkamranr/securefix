@@ -19,18 +19,22 @@
   <section class="auth-card">
     {% if mode == 'login' %}
       <h2>Sign in</h2>
-      <p class="lede">{% if windows %}Use your Windows account (for example <code>jdoe</code> or <code>CORP\jdoe</code>) or the account an administrator gave you.{% else %}Use the account an administrator gave you.{% endif %}</p>
+      <p class="lede">{% if gitlab_signin %}Sign in with your GitLab account: no token to set up.{% elif windows %}Use your Windows account (for example <code>jdoe</code> or <code>CORP\jdoe</code>) or the account an administrator gave you.{% else %}Use the account an administrator gave you.{% endif %}</p>
     {% else %}
       <h2>Set up the administrator</h2>
       <p class="lede">No accounts exist yet. This first account becomes the administrator; after that, administrators add accounts or turn on Windows sign-in.</p>
     {% endif %}
     {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% if mode == 'login' and gitlab_signin %}
+    <a class="button primary full gitlab-signin" href="/login/gitlab">{{ icon('gitlab') }} Sign in with GitLab</a>
+    <p class="divider"><span>{% if windows %}or with your Windows or local account{% else %}or with a local account{% endif %}</span></p>
+    {% endif %}
     <form method="post" action="{{ '/login' if mode == 'login' else '/register' }}" class="stack">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>Username <input name="username" autocomplete="username" required autofocus value="{{ username or '' }}" autocapitalize="none" spellcheck="false"></label>
       <label>Password <input name="password" type="password" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" required {% if mode != 'login' %}minlength="12"{% endif %}>
         {% if mode != 'login' %}<span class="hint">At least 12 characters.</span>{% endif %}</label>
-      <button class="primary full">{{ 'Sign in' if mode == 'login' else 'Create administrator' }}</button>
+      <button class="{{ '' if gitlab_signin else 'primary ' }}full">{{ 'Sign in' if mode == 'login' else 'Create administrator' }}</button>
     </form>
     {% if mode == 'login' %}<p class="hint auth-foot">No account or forgot your password? Ask an administrator.{% if windows %} Windows passwords are managed in Windows.{% endif %}</p>{% endif %}
   </section>

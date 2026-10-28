@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
@@ -26,14 +27,35 @@ class GitLabError(Exception):
 
 
 class GitLabClient:
-    def __init__(self, token: str, token_type: str = "access_token", base_url: str | None = None):
+    def __init__(self, token: str, token_type: str = "access_token", base_url: str | None = None,
+                 refresh: Callable[[], str] | None = None):
+        """refresh: for GitLab sign-in tokens, returns a renewed token when GitLab rejects the current one."""
         self.base_url = (base_url or settings.gitlab_url).rstrip("/")
         self.token = token
         self.token_type = token_type
-        headers = {"Authorization": f"Bearer {token}"} if token_type == "oauth" else {"PRIVATE-TOKEN": token}
-        self.http = httpx.Client(base_url=f"{self.base_url}/api/v4", headers=headers,
-                                 verify=settings.tls_verify, timeout=60)
-        self.gql_http = httpx.Client(headers=headers, verify=settings.tls_verify, timeout=60)
+        self.refresh = refresh if token_type == "oauth" else None
+        self.http = httpx.Client(base_url=f"{self.base_url}/api/v4", verify=settings.tls_verify, timeout=60)
+        self.gql_http = httpx.Client(verify=settings.tls_verify, timeout=60)
+        self._use(token)
+
+    def _use(self, token: str):
+        self.token = token
+        headers = {"Authorization": f"Bearer {token}"} if self.token_type == "oauth" else {"PRIVATE-TOKEN": token}
+        for client in (self.http, self.gql_http):
+            client.headers.pop("Authorization", None)
+            client.headers.pop("PRIVATE-TOKEN", None)
+            client.headers.update(headers)
+
+    def _send(self, client: httpx.Client, method: str, url: str, **kw) -> httpx.Response:
+        """One request; a rejected GitLab sign-in token is renewed once and the request repeated."""
+        r = client.request(method, url, **kw)
+        if r.status_code == 401 and self.refresh:
+            try:
+                self._use(self.refresh())
+            except Exception as exc:  # noqa: BLE001 - OAuthError carries the message for the user
+                raise GitLabError(str(exc), 401) from exc
+            r = client.request(method, url, **kw)
+        return r
 
     def close(self):
         self.http.close()
@@ -48,7 +70,7 @@ class GitLabClient:
     # ---------- low level ----------
     def _req(self, method: str, path: str, **kw) -> httpx.Response:
         try:
-            r = self.http.request(method, path, **kw)
+            r = self._send(self.http, method, path, **kw)
         except httpx.HTTPError as exc:
             raise GitLabError(f"Can't reach GitLab at {self.base_url}: {exc}") from exc
         if r.status_code == 401:
@@ -67,7 +89,8 @@ class GitLabClient:
 
     def graphql(self, query: str, variables: dict | None = None) -> dict:
         try:
-            r = self.gql_http.post(f"{self.base_url}/api/graphql", json={"query": query, "variables": variables or {}})
+            r = self._send(self.gql_http, "POST", f"{self.base_url}/api/graphql",
+                           json={"query": query, "variables": variables or {}})
         except httpx.HTTPError as exc:
             raise GitLabError(f"Can't reach GitLab GraphQL: {exc}") from exc
         if r.status_code == 401:
