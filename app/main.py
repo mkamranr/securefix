@@ -23,8 +23,8 @@ from .analyzer import DEFAULT_SEVERITIES, SEVERITIES
 from .config import settings
 from .db import AnalysisJob, Finding, ProjectConfig, User, get_db, init_db, utcnow
 from .gitlab_client import GitLabClient, GitLabError
-from .llm_client import (MAX_TOKENS_RANGE, LLMClient, llm_config, llm_overrides, reset_llm_config,
-                         save_llm_config)
+from .llm_client import (CONTEXT_BUDGET_RANGE, MAX_TOKENS_RANGE, LLMClient, llm_config, llm_overrides,
+                         reset_llm_config, save_llm_config)
 from .patcher import EditError, apply_edits
 from .security import SESSION_SECRET, decrypt_token, encrypt_token, hash_password, mask_token, verify_password
 
@@ -289,7 +289,8 @@ def admin_page(request: Request, user: User = Depends(admin_user), db: Session =
 @app.post("/admin/llm")
 def save_llm(request: Request, base_url: str = Form(...), model: str = Form(...), api_key: str = Form(""),
              clear_key: str = Form(""), structured_output: str = Form(""), timeout_s: str = Form("900"),
-             parallel: str = Form(""), max_tokens: str = Form(""), thinking: str = Form(""), csrf: str = Form(""),
+             parallel: str = Form(""), max_tokens: str = Form(""), thinking: str = Form(""),
+             context_budget: str = Form(""), csrf: str = Form(""),
              user: User = Depends(admin_user),
              db: Session = Depends(get_db)):
     check_csrf(request, csrf)
@@ -307,10 +308,15 @@ def save_llm(request: Request, base_url: str = Form(...), model: str = Form(...)
     low, high = MAX_TOKENS_RANGE
     if max_tokens and (not max_tokens.isdigit() or not low <= int(max_tokens) <= high):
         return back_to_admin("model", error=f"Use a reply limit between {low} and {high} tokens.")
+    context_budget = context_budget.strip().replace(",", "")
+    low, high = CONTEXT_BUDGET_RANGE
+    if context_budget and (not context_budget.isdigit() or not low <= int(context_budget) <= high):
+        return back_to_admin("model", error=f"Use a code budget between {low} and {high} tokens.")
     key = "EMPTY" if clear_key else (api_key.strip() or None)
     save_llm_config(db, base_url, model, bool(structured_output), int(timeout_s), key,
                     int(parallel) if parallel else None, int(max_tokens) if max_tokens else None,
-                    thinking == "on" if thinking in ("on", "off") else None)
+                    thinking == "on" if thinking in ("on", "off") else None,
+                    int(context_budget) if context_budget else None)
     log.info("%s changed the vLLM settings (%s, %s, %s parallel)", user.username, base_url, model, parallel or "default")
     return back_to_admin("model", saved="Model settings saved. New analyses use them; running ones keep the old settings.")
 
@@ -645,7 +651,9 @@ def create_job(body: JobIn, request: Request, user: User = Depends(current_user)
     severities = [s for s in SEVERITIES if s in picked]
     if body.thinking not in (None, "on", "off"):
         raise HTTPException(400, "Thinking must be on or off.")
-    thinking = body.thinking or ("on" if llm_config(db)["thinking"] else "off")
+    cfg = llm_config(db)
+    thinking = body.thinking or ("on" if cfg["thinking"] else "off")
+    budget = cfg["context_budget"]  # the Admin value when the analysis starts, so Run again picks up a change
     with gitlab_for(user) as gl:
         project = gl.project(body.project_id)  # also checks the user can see it
         scan = gl.scan_status(body.project_id, body.sha)
@@ -654,12 +662,15 @@ def create_job(body: JobIn, request: Request, user: User = Depends(current_user)
     running = db.scalar(select(AnalysisJob).where(AnalysisJob.project_id == body.project_id,
                                                   AnalysisJob.sha == body.sha,
                                                   func.coalesce(AnalysisJob.thinking, "on") == thinking,
+                                                  func.coalesce(AnalysisJob.context_budget,
+                                                                settings.context_token_budget) == budget,
                                                   AnalysisJob.status.in_(["queued", "running"])))
     if running:
         return {"id": running.id, "existing": True}
     job = AnalysisJob(user_id=user.id, project_id=body.project_id, project_path=project["path_with_namespace"],
                       branch=body.branch, sha=body.sha, default_branch=project.get("default_branch") or "",
-                      severities=severities, thinking=thinking, progress="Waiting for a free worker")
+                      severities=severities, thinking=thinking, context_budget=budget,
+                      progress="Waiting for a free worker")
     db.add(job)
     db.commit()
     return {"id": job.id, "existing": False}

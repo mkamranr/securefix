@@ -57,7 +57,7 @@ Expanded, every finding shows:
 | **Dismiss as false positive** | Only for findings with a vulnerability record (default branch). Never automatic. |
 | **Open vulnerability in GitLab** | Opens the vulnerability page, or the pipeline's security report on branches without a record yet. |
 | **Retry failed** | Analyzes only the findings that failed (e.g. the model was unreachable), in the same analysis. |
-| **Run again** | Starts a new analysis of the same commit with the same thinking setting. Unchanged findings are copied; a new result from the model can be posted to the same issue. |
+| **Run again** | Starts a new analysis of the same commit with the same thinking setting and the current *Code per finding* budget. Unchanged findings are copied; a new result from the model can be posted to the same issue. |
 | **Run with thinking off / on** | Starts a new analysis of the same commit with the other thinking setting. Results are only copied between analyses with the same setting, so the model really answers again. |
 
 Every action is recorded on the finding with who did it and when.
@@ -67,6 +67,11 @@ Open an analysis and choose **Run with thinking off** (or **on**). Then compare 
 confidence in the list, the *avg time per finding* tile, and the time and tokens of each finding. **History** shows
 each analysis's thinking setting, and the Excel report has *Model thinking* and *Analysis time* on the Summary sheet and
 *Analysis time (s)* and *Tokens generated* per finding.
+
+To compare **code budgets**, an administrator changes *Code per finding* on the Admin page and then chooses
+**Run again**: the new analysis uses the new budget and asks the model again. Findings whose code already fit the
+old budget get exactly the same prompt, so their earlier result is reused. The header, History and the Excel
+report show each analysis's budget.
 
 The time is wall-clock time for the whole finding: every triage run, waiting for a free slot on vLLM, and the fix with
 its validation. Compare analyses run while vLLM was similarly busy.

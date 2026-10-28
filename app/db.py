@@ -75,6 +75,7 @@ class AnalysisJob(Base):
     pipeline_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     severities: Mapped[list | None] = mapped_column(JSON, nullable=True)  # severities to analyze; None = all
     thinking: Mapped[str | None] = mapped_column(String(10), nullable=True)  # on|off; None (older analyses) = on
+    context_budget: Mapped[int | None] = mapped_column(Integer, nullable=True)  # tokens of code per finding; None = .env
     status: Mapped[str] = mapped_column(String(20), default="queued", index=True)  # queued|running|done|failed|cancelled
     progress: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -84,6 +85,11 @@ class AnalysisJob(Base):
     findings: Mapped[list["Finding"]] = relationship(back_populates="job", cascade="all, delete-orphan",
                                                      order_by="Finding.id")
     user: Mapped[User] = relationship()
+
+    @property
+    def budget(self) -> int:
+        """Tokens of code per finding this analysis used (older analyses used the .env value)."""
+        return self.context_budget or settings.context_token_budget
 
 
 class Finding(Base):
@@ -145,7 +151,7 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 # Columns added after the first release. create_all doesn't touch existing tables, so init_db adds them.
 _ADDED_COLUMNS = {
-    "jobs": {"severities": "JSON", "thinking": "VARCHAR(10)"},
+    "jobs": {"severities": "JSON", "thinking": "VARCHAR(10)", "context_budget": "INTEGER"},
     "findings": {"code_key": "VARCHAR(64) NOT NULL DEFAULT ''", "copied_from": "JSON", "duration_s": "FLOAT",
                  "completion_tokens": "INTEGER"},
     "users": {"auth_source": "VARCHAR(20) NOT NULL DEFAULT 'local'", "display_name": "VARCHAR(200)",

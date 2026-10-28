@@ -9,7 +9,8 @@
       <h1><span id="job-project">{{ job.project_path }}</span></h1>
       <p class="muted">Branch <strong>{{ job.branch }}</strong> at <code>{{ job.sha[:8] }}</code> · started by {{ job.user.username }} {{ job.created_at | ago }}</p>
       <p class="muted">Severities analyzed: {% for s in (job.severities or ['all']) %}<span class="sev sev-{{ s }}">{{ s }}</span> {% endfor %}
-        · Model thinking: <span class="chip-think chip-think-{{ job.thinking or 'on' }}">{{ (job.thinking or 'on') | capitalize }}</span></p>
+        · Model thinking: <span class="chip-think chip-think-{{ job.thinking or 'on' }}">{{ (job.thinking or 'on') | capitalize }}</span>
+        · Code per finding: up to {{ "{:,}".format(job.budget) }} tokens</p>
     </div>
     <div class="job-actions">
       <span id="job-status" class="state state-{{ job.status }}">{{ job.status | capitalize }}</span>

@@ -165,6 +165,7 @@ class JobRunner:
         self.gl = GitLabClient(decrypt_token(user.gitlab_token_enc), user.gitlab_token_type)
         self.thinking = self.job.thinking or "on"  # analyses from before the choice ran with the model's default
         self.llm = LLMClient(thinking=self.thinking == "on")
+        self.budget = self.job.budget
         self.workdir = settings.checkouts_dir / f"job-{job_id}"
         cfg = self.db.scalar(select(ProjectConfig).where(ProjectConfig.gitlab_project_id == self.job.project_id))
         if cfg is not None:
@@ -340,6 +341,7 @@ class JobRunner:
             .where(Finding.code_key.in_((f.code_key, "")),  # "": analyzed before code keys existed
                    AnalysisJob.project_id == self.job.project_id, Finding.job_id != f.job_id,
                    func.coalesce(AnalysisJob.thinking, "on") == self.thinking,  # A/B runs must ask the model
+                   func.coalesce(AnalysisJob.context_budget, settings.context_token_budget) == self.budget,
                    Finding.status == "done", Finding.verdict.is_not(None), Finding.context_tokens > 0,
                    Finding.file == f.file, Finding.start_line == f.start_line,
                    Finding.end_line.is_not_distinct_from(f.end_line), Finding.title == f.title,
@@ -370,7 +372,7 @@ class JobRunner:
         f.code_key = code_key(f, self.job.project_id, lambda p: read_lines(self.workdir, p))
         if self._copy_earlier(f, db):
             return
-        ctx = ContextBuilder(self.workdir, settings.context_token_budget).build(f)
+        ctx = ContextBuilder(self.workdir, self.budget).build(f)
         f.context_files, f.context_tokens, f.injection_suspected = ctx.files, ctx.tokens, ctx.injection_suspected
         if not ctx.chunks:
             f.status, f.verdict = "done", "needs_review"

@@ -51,7 +51,7 @@ The exact commit is checked out shallowly. The user's GitLab token is passed to 
 written to disk.
 
 ### 3. Layered context
-For each finding, `context_builder.py` collects code in layers until the token budget (`VT_CONTEXT_TOKEN_BUDGET`) is
+For each finding, `context_builder.py` collects code in layers until the token budget (*Code per finding* on the Admin page, `VT_CONTEXT_TOKEN_BUDGET` by default) is
 used up:
 
 1. the file containing the finding;
@@ -90,8 +90,9 @@ There are two ways a finding can reuse earlier work:
   them, and at each taint-trace step. The finding is marked *Copied* and links to the analysis it came from.
 - **Exact cache hit**: the whole context, model and prompt version are identical.
 
-Both only reuse analyses made with the same **thinking** setting, so analyzing a commit again with thinking switched
-on or off really asks the model, and the two can be compared.
+Copies only come from analyses made with the same **thinking** setting and the same **code per finding** budget,
+so analyzing a commit again with either changed really asks the model, and the two can be compared. An exact cache
+hit still applies across budgets: if the finding's code fits both budgets, the model would get the very same prompt.
 
 A copied analysis counts as posted if the analysis it was copied from was posted to GitLab, so the same comment
 is never added to an issue twice.

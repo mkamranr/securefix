@@ -27,6 +27,7 @@ class BadReply(LLMError):
 
 
 MAX_TOKENS_RANGE = (1024, 32768)
+CONTEXT_BUDGET_RANGE = (4000, 1000000)  # tokens of code per finding
 RETRY_TOKENS_CAP = 16384  # a reply cut off at the limit is retried with up to this many tokens
 SHORTER = ("\n\nYour previous answer was too long and was cut off. Answer again with the same JSON object, "
            "keeping every text field short (reasoning under 150 words).")
@@ -36,7 +37,8 @@ SHORTER = ("\n\nYour previous answer was too long and was cut off. Answer again 
 def _env_defaults() -> dict:
     return {"base_url": settings.llm_base_url, "model": settings.llm_model, "api_key": settings.llm_api_key,
             "structured_output": settings.llm_structured_output, "timeout_s": settings.llm_timeout_s,
-            "parallel": settings.llm_parallel, "max_tokens": settings.llm_max_tokens, "thinking": settings.llm_thinking}
+            "parallel": settings.llm_parallel, "max_tokens": settings.llm_max_tokens, "thinking": settings.llm_thinking,
+            "context_budget": settings.context_token_budget}
 
 
 def llm_overrides(db: Session) -> dict[str, str]:
@@ -70,12 +72,15 @@ def llm_config(db: Session | None = None) -> dict:
     if saved.get("max_tokens", "").isdigit():
         cfg["max_tokens"] = int(saved["max_tokens"])
     cfg["max_tokens"] = min(max(cfg["max_tokens"], MAX_TOKENS_RANGE[0]), MAX_TOKENS_RANGE[1])
+    if saved.get("context_budget", "").isdigit():
+        cfg["context_budget"] = int(saved["context_budget"])
+    cfg["context_budget"] = min(max(cfg["context_budget"], CONTEXT_BUDGET_RANGE[0]), CONTEXT_BUDGET_RANGE[1])
     return cfg
 
 
 def save_llm_config(db: Session, base_url: str, model: str, structured_output: bool, timeout_s: int,
                     api_key: str | None = None, parallel: int | None = None, max_tokens: int | None = None,
-                    thinking: bool | None = None):
+                    thinking: bool | None = None, context_budget: int | None = None):
     """api_key None keeps the saved key; any string (EMPTY for none) replaces it."""
     values = {"base_url": base_url, "model": model, "structured_output": "true" if structured_output else "false",
               "timeout_s": str(timeout_s)}
@@ -85,6 +90,8 @@ def save_llm_config(db: Session, base_url: str, model: str, structured_output: b
         values["max_tokens"] = str(max_tokens)
     if thinking is not None:
         values["thinking"] = "true" if thinking else "false"
+    if context_budget is not None:
+        values["context_budget"] = str(context_budget)
     if api_key is not None:
         values["api_key"] = encrypt_token(api_key)
     app_settings.save(db, "llm", values)

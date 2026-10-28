@@ -40,6 +40,8 @@
           <span class="hint">Model requests one analysis sends at the same time; vLLM processes them together. 1 = one after another. Lower it if vLLM runs out of memory or requests time out. Total load = this × worker threads.</span></label>
         <label>Max tokens per reply <input name="max_tokens" type="number" min="1024" max="32768" value="{{ llm.max_tokens }}" required>
           <span class="hint">Longest triage reply the model may write. A reply cut off at this limit is retried once with twice as many; raise it if findings fail with “cut off” or “wasn’t valid JSON”. Prompt plus reply must fit the model’s context length.</span></label>
+        <label>Code per finding (tokens) <input name="context_budget" type="number" min="4000" max="1000000" step="1000" value="{{ llm.context_budget }}" required>
+          <span class="hint">Most code the model sees for one finding (the finding’s file, taint trace, called functions, callers, configuration). More is slower and can lower precision. Code, prompts and reply (with thinking) must fit vLLM’s <code>--max-model-len</code>. New analyses and <em>Run again</em> use it.</span></label>
         <label>Thinking (default for new analyses)
           <select name="thinking">
             <option value="on" {% if llm.thinking %}selected{% endif %}>On: the model reasons before answering (slower)</option>

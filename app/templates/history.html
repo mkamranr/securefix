@@ -29,7 +29,8 @@
       <td>{{ j.branch }}</td>
       <td><code>{{ j.sha[:8] }}</code></td>
       <td><span class="state state-{{ j.status }}">{{ j.status | capitalize }}</span></td>
-      <td><span class="chip-think chip-think-{{ j.thinking or 'on' }}">{{ (j.thinking or 'on') | capitalize }}</span></td>
+      <td><span class="chip-think chip-think-{{ j.thinking or 'on' }}">{{ (j.thinking or 'on') | capitalize }}</span>
+        <span class="sub" title="Tokens of code per finding">{{ "{:,}".format(j.budget // 1000) }}K</span></td>
       <td class="num {{ 'num-real' if c.get('true_positive') }}">{{ c.get('true_positive', 0) }}</td>
       <td class="num {{ 'num-review' if c.get('needs_review') }}">{{ c.get('needs_review', 0) }}</td>
       <td class="num {{ 'num-fp' if c.get('false_positive') }}">{{ c.get('false_positive', 0) }}</td>

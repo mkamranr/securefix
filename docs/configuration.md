@@ -13,7 +13,7 @@ the full list. Some model settings can also be changed by administrators on the 
 | `VT_LLM_STRUCTURED_OUTPUT` | `true` to request `response_format: json_schema` from vLLM |
 | `VT_SECRET_KEY` | Master secret for sessions and token encryption. Never change it after first use |
 | `POSTGRES_PASSWORD` | Password of the bundled Postgres |
-| `VT_CONTEXT_TOKEN_BUDGET` | Tokens of code per finding (default 100000; the model's window is larger, but precision drops on very long prompts) |
+| `VT_CONTEXT_TOKEN_BUDGET` | Tokens of code per finding (default 100000; the model's window is larger, but precision drops on very long prompts). Administrators can change it on the Admin page as *Code per finding* |
 | `VT_TRIAGE_VOTES` | Independent triage runs per finding (default 3) |
 | `VT_LLM_MAX_TOKENS` | Longest triage reply in tokens (default 4096, 1024 to 32768). A reply cut off at this limit is retried once with twice as many. The prompt plus the reply must fit the model's context length |
 | `VT_LLM_THINKING` | Default for new analyses: `true` lets a reasoning model (Qwen3) think before it answers, `false` answers directly (default `true`). Users choose per analysis; it is sent to vLLM as `chat_template_kwargs.enable_thinking`. Thinking uses part of `VT_LLM_MAX_TOKENS` |
@@ -29,8 +29,14 @@ the full list. Some model settings can also be changed by administrators on the 
 ## Model settings (Admin page)
 
 Administrators can override the vLLM URL, model, API key, timeout, *Parallel requests*, *Max tokens per reply*,
-*Thinking* (the default for new analyses) and structured output under **Admin › Local model (vLLM)**. The overrides are stored in the database and apply to new analyses
-without a restart. **Reset to the values in .env** undoes them.
+*Code per finding* (4,000 to 1,000,000 tokens), *Thinking* (the default for new analyses) and structured output
+under **Admin › Local model (vLLM)**. The overrides are stored in the database and apply to new analyses without a
+restart. **Reset to the values in .env** undoes them.
+
+*Code per finding* is the most code the model sees for one finding. The code, prompts and reply (including the
+model's thinking) must fit vLLM's `--max-model-len`. For example, with a 128K window, keep it at about 100,000 when
+*Max tokens per reply* is 16,384. Each analysis records the budget it used, shown in its header, in History and in
+the Excel report.
 
 ## GitLab tokens
 

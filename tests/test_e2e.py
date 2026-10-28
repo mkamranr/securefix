@@ -264,6 +264,16 @@ def test_admin_llm_settings(client):
         r = client.post("/admin/llm", data={"base_url": base, "model": "m", "timeout_s": "120", "max_tokens": bad,
                                             "csrf": token})
         assert "reply limit between 1024 and 32768 tokens" in r.text
+    assert llm_config()["context_budget"] == 100000
+    r = client.post("/admin/llm", data={"base_url": base, "model": "other-model", "timeout_s": "120",
+                                        "context_budget": "60,000", "csrf": token})
+    assert 'name="context_budget" type="number" min="4000" max="1000000" step="1000" value="60000"' in r.text
+    assert llm_config()["context_budget"] == 60000
+    for bad in ("1000", "2000000", "x"):
+        r = client.post("/admin/llm", data={"base_url": base, "model": "m", "timeout_s": "120", "context_budget": bad,
+                                            "csrf": token})
+        assert "code budget between 4000 and 1000000 tokens" in r.text
+    assert llm_config()["context_budget"] == 60000
     for bad in ("0", "33", "x"):
         r = client.post("/admin/llm", data={"base_url": base, "model": "m", "timeout_s": "120", "parallel": bad,
                                             "csrf": token})
@@ -273,6 +283,7 @@ def test_admin_llm_settings(client):
     r = client.post("/admin/llm/reset", data={"csrf": token})
     assert "reset to the values in .env" in r.text
     assert client.get("/api/health").json()["llm"]["ok"]
+    assert llm_config()["context_budget"] == 100000
 
 
 @pytest.fixture
@@ -426,7 +437,8 @@ def test_report_text_is_never_a_formula():
            verdict="true_positive", confidence=0.9, reasoning="+cmd|' /C calc'!A0", fix=None, diff="",
            validation_status=None, error=None, actions=[], copied_from=None, duration_s=None, completion_tokens=None)
     job = NS(id=5, project_path="grp/app", branch="main", sha="a" * 40, pipeline_id=None, status="done",
-             user=NS(username="alice"), created_at=None, finished_at=None, severities=None, thinking=None, findings=[f])
+             user=NS(username="alice"), created_at=None, finished_at=None, severities=None, thinking=None, budget=100000,
+             findings=[f])
     ws = load_workbook(BytesIO(build_report(job, "https://gl", "alice")))["Findings"]
     assert ws["E2"].data_type == "s" and ws["E2"].value.startswith("=HYPERLINK")
     assert ws["V2"].data_type == "s" and ws["V2"].value == "+cmd|' /C calc'!A0"  # control character dropped
@@ -799,3 +811,55 @@ def test_thinking_mode_per_analysis(client, fake_services, monkeypatch):
     assert row[head.index("Analysis time (s)")] > 0 and row[head.index("Tokens generated")] >= 120
     copied_ws = load_workbook(BytesIO(client.get(f"/jobs/{again}/report.xlsx").content))["Findings"]
     assert copied_ws.cell(2, head.index("Analysis time (s)") + 1).value in (None, "")
+
+
+def test_code_budget_per_analysis(client, fake_services, monkeypatch):
+    """The Admin code budget limits the code per finding, is kept per analysis, and copies stay within one budget."""
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from app.analyzer import JobRunner
+    from app.llm_client import llm_config
+    from app.worker import _claim_next
+    h = {"X-CSRF-Token": csrf(client, "/")}
+    token = csrf(client, "/admin")
+    cfg = llm_config()
+
+    def set_budget(n):
+        r = client.post("/admin/llm", data={"base_url": cfg["base_url"], "model": cfg["model"], "timeout_s": "120",
+                                            "structured_output": "1", "context_budget": str(n), "csrf": token})
+        assert "Model settings saved" in r.text
+
+    def run(job_id):
+        assert _claim_next() == job_id
+        JobRunner(job_id).run()
+        return client.get(f"/api/jobs/{job_id}").json()
+
+    _forget_results()
+    calls = _count_calls(monkeypatch)
+    body = {"project_id": 1, "project_path": "grp/app", "branch": "feature/login", "sha": fake_services.SHA,
+            "severities": ["high", "low"]}
+    set_budget(4000)
+    small = client.post("/api/jobs", headers=h, json=body).json()["id"]
+    job = run(small)
+    assert all(f["status"] == "done" and 0 < f["context_tokens"] <= 4000 for f in job["findings"])
+    assert "up to 4,000 tokens" in client.get(f"/jobs/{small}").text and ">4K<" in client.get("/history").text
+    ws = load_workbook(BytesIO(client.get(f"/jobs/{small}/report.xlsx").content))["Summary"]
+    assert {r[1].value: r[2].value for r in ws.iter_rows() if r[1].value}["Code per finding"] == "up to 4,000 tokens"
+
+    # Another budget asks the model again (here the code fits both budgets, so drop the exact-prompt cache too);
+    # Run again with the same budget copies.
+    set_budget(50000)
+    from sqlalchemy import update
+    from app.db import Finding, SessionLocal
+    with SessionLocal() as db:
+        db.execute(update(Finding).values(cache_key=""))
+        db.commit()
+    calls.clear()
+    big = client.post(f"/api/jobs/{small}/rerun", headers=h).json()["id"]
+    job = run(big)
+    assert calls and all(f["copied_from"] is None for f in job["findings"])
+    calls.clear()
+    again = client.post(f"/api/jobs/{big}/rerun", headers=h).json()["id"]
+    job = run(again)
+    assert calls == [] and all(f["copied_from"]["job"] == big for f in job["findings"])
+    client.post("/admin/llm/reset", data={"csrf": token})

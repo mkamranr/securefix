@@ -221,6 +221,7 @@ def _summary_sheet(ws, job, gitlab_url: str, generated_by: str):
         ("Finished", _when(job.finished_at), None),
         ("Severities analyzed", ", ".join(s.capitalize() for s in job.severities) if job.severities else "All", None),
         ("Model thinking", (job.thinking or "on").capitalize(), None),
+        ("Code per finding", f"up to {job.budget:,} tokens", None),
         ("Analysis time", _duration(job.findings), None),
         ("Report generated", f"{_when(datetime.now(timezone.utc))} by {generated_by}", None),
     ]
