@@ -52,8 +52,9 @@ def code_key(f: Finding, project_id: int, read) -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
+VOTE_FIELDS = ("verdict", "confidence", "source", "sink", "mitigations", "reasoning", "evidence")
 COPIED_FIELDS = ("verdict", "confidence", "votes", "reasoning", "evidence", "fix", "diff", "validation_status",
-                 "validation_log", "injection_suspected", "context_files", "context_tokens")
+                 "validation_log", "injection_suspected", "context_files", "context_tokens", "reviewed")
 
 
 @lru_cache(maxsize=1)
@@ -373,6 +374,8 @@ class JobRunner:
         f.status = "analyzing"
         db.commit()
         f.code_key = code_key(f, self.job.project_id, lambda p: read_lines(self.workdir, p))
+        if f.reviewed and f.reviewed.get("verdict") == "true_positive" and not f.fix:
+            return self.fix_confirmed(f, db)
         if self._copy_earlier(f, db):
             return
         ctx = ContextBuilder(self.workdir, self.budget).build(f)
@@ -389,7 +392,7 @@ class JobRunner:
                                                       Finding.id != f.id).order_by(Finding.id.desc()))
         if cached:
             for attr in ("verdict", "confidence", "votes", "reasoning", "evidence", "fix", "diff",
-                         "validation_status", "validation_log"):
+                         "validation_status", "validation_log", "reviewed"):
                 setattr(f, attr, getattr(cached, attr))
             f.llm_log = [{"note": f"Reused result of finding #{cached.id}: same code and prompt."}]
             at = cached.job.finished_at or cached.job.created_at
@@ -445,7 +448,7 @@ class JobRunner:
         agreeing = [float(v.get("confidence") or 0) for v in votes if v.get("verdict") == top]
         f.verdict = verdict
         f.confidence = round(sum(agreeing) / len(agreeing) * top_n / n_votes, 3)
-        f.votes = [{"verdict": v.get("verdict"), "confidence": v.get("confidence")} for v in votes]
+        f.votes = [{k: v.get(k) for k in VOTE_FIELDS} for v in votes]  # every run's argument, for the reviewer
         f.reasoning = chosen.get("reasoning", "")
         if verdict == "needs_review" and top_n != len(votes):
             f.reasoning = (f"The model's {len(votes)} triage runs disagreed "
@@ -463,6 +466,28 @@ class JobRunner:
         f.llm_log = logs
         f.completion_tokens = sum(e.get("tokens") or 0 for e in logs)
         f.status = "done"
+
+    def fix_confirmed(self, f: Finding, db):
+        """A person confirmed a Needs review finding as real: write and validate its fix without triaging again.
+        The runs' verdicts and reasoning stay as they were, so the disagreement remains visible."""
+        ctx = ContextBuilder(self.workdir, self.budget).build(f)
+        f.context_files, f.context_tokens, f.injection_suspected = ctx.files, ctx.tokens, ctx.injection_suspected
+        logs = list(f.llm_log or [])
+        if not ctx.chunks:
+            f.status, f.error = "done", f"The file {f.file} couldn't be read at this commit, so no fix was written."
+            return
+        db.commit()  # don't hold a write open during the model requests
+        votes = [v for v in f.votes or [] if v.get("reasoning")] or [
+            e["parsed"] for e in logs if e.get("call") == "triage" and isinstance(e.get("parsed"), dict)]
+        chosen = (next((v for v in votes if v.get("verdict") == "true_positive"), None)
+                  or max(votes, key=lambda v: float(v.get("confidence") or 0), default=None)
+                  or {"reasoning": f.reasoning})
+        logs.append({"note": f"{f.reviewed.get('by')} confirmed the finding as real; fix requested."})
+        self.check_cancelled()
+        self.fix(f, prompts.finding_block(f, cwe_text(f.cwe)), ctx.render(), chosen, logs)
+        f.llm_log = logs
+        f.completion_tokens = sum(e.get("tokens") or 0 for e in logs)
+        f.error, f.status = None, "done"
 
     def fix(self, f: Finding, block: str, context: str, triage: dict, logs: list):
         error = ""

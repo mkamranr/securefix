@@ -142,6 +142,8 @@ class Finding(Base):
     # Same vulnerability, file, lines and code (see analyzer.code_key): a later commit copies this analysis.
     code_key: Mapped[str] = mapped_column(String(64), default="", index=True)
     copied_from: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {finding, job, sha, at, why}
+    # A person's decision on the model's verdict (usually a Needs review): {by, at, verdict, from_verdict}.
+    reviewed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     actions: Mapped[list] = mapped_column(JSON, default=list)  # audit of write-backs: [{type, url, by, at}]
     llm_log: Mapped[list] = mapped_column(JSON, default=list)  # prompts and raw responses, for audit
@@ -166,7 +168,7 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 _ADDED_COLUMNS = {
     "jobs": {"severities": "JSON", "thinking": "VARCHAR(10)", "context_budget": "INTEGER"},
     "findings": {"code_key": "VARCHAR(64) NOT NULL DEFAULT ''", "copied_from": "JSON", "duration_s": "FLOAT",
-                 "completion_tokens": "INTEGER"},
+                 "completion_tokens": "INTEGER", "reviewed": "JSON"},
     "users": {"auth_source": "VARCHAR(20) NOT NULL DEFAULT 'local'", "display_name": "VARCHAR(200)",
               "email": "VARCHAR(200)", "last_login_at": "TIMESTAMP WITH TIME ZONE", "gitlab_user_id": "INTEGER",
               "gitlab_refresh_enc": "TEXT", "gitlab_token_expires_at": "TIMESTAMP WITH TIME ZONE"},

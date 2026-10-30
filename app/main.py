@@ -785,11 +785,12 @@ def finding_json(f: Finding, job: AnalysisJob) -> dict:
         "id", "uuid", "vulnerability_gid", "title", "severity", "scanner", "identifiers", "cwe", "file",
         "start_line", "end_line", "description", "code_flows", "status", "verdict", "confidence", "votes",
         "reasoning", "evidence", "fix", "diff", "validation_status", "validation_log", "injection_suspected",
-        "context_files", "context_tokens", "error", "actions", "copied_from", "duration_s", "completion_tokens")}
+        "context_files", "context_tokens", "error", "actions", "copied_from", "duration_s", "completion_tokens", "reviewed")}
     posted = prompts.posted_note(f)
     out["posted"] = posted and {k: posted.get(k) for k in ("url", "by", "at", "issue_iid", "copied_from_job")}
     mr = prompts.fix_mr(f)
     out["mr"] = mr and {k: mr.get(k) for k in ("url", "by", "at", "mr_iid", "copied_from_job")}
+    out["original"] = prompts.original_time(f)
     out["gitlab_url"] = prompts.vulnerability_url(f, job, settings.gitlab_url)
     return out
 
@@ -890,6 +891,21 @@ def post_note(fid: int, request: Request, user: User = Depends(current_user), db
     return {"ok": True, "url": url, "where": where, "issue_iid": issue["iid"], "created": created}
 
 
+def _review(f: Finding, user: User, verdict: str):
+    """Records a person's verdict on the finding, keeping the model's in `from_verdict`."""
+    if not f.reviewed:
+        f.reviewed = {"by": user.username, "at": utcnow().isoformat(), "verdict": verdict, "from_verdict": f.verdict}
+    else:
+        f.reviewed = {**f.reviewed, "by": user.username, "at": utcnow().isoformat(), "verdict": verdict}
+    f.verdict = verdict
+
+
+def _dismiss_in_gitlab(f: Finding, user: User):
+    comment = f"False positive (confirmed by {user.username} after automated triage): {f.reasoning[:3500]}"
+    with gitlab_for(user) as gl:
+        gl.dismiss_vulnerability(f.vulnerability_gid, comment)
+
+
 @app.post("/api/findings/{fid}/dismiss")
 def dismiss(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     check_csrf(request)
@@ -897,11 +913,51 @@ def dismiss(fid: int, request: Request, user: User = Depends(current_user), db: 
     if not f.vulnerability_gid:
         raise HTTPException(409, "This finding has no vulnerability record yet (it isn't on the default branch). "
                                  "Post the analysis instead.")
-    comment = f"False positive (confirmed by {user.username} after automated triage): {f.reasoning[:3500]}"
-    with gitlab_for(user) as gl:
-        gl.dismiss_vulnerability(f.vulnerability_gid, comment)
+    _dismiss_in_gitlab(f, user)
+    if f.verdict != "false_positive":
+        _review(f, user, "false_positive")
     _record(f, user, "dismissed as false positive", None, db)
     return {"ok": True}
+
+
+@app.post("/api/findings/{fid}/false-positive")
+def mark_false_positive(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """A person settles a Needs review finding as a false positive; it is also dismissed in GitLab when it has a
+    vulnerability record there."""
+    check_csrf(request)
+    _finding_for(fid, user, db, act=True)
+    f = db.get(Finding, fid, with_for_update=True, populate_existing=True)
+    if f.status != "done" or f.verdict != "needs_review":
+        raise HTTPException(409, "Only a finding that needs review can be marked as a false positive here.")
+    dismissed = bool(f.vulnerability_gid)
+    if dismissed:
+        _dismiss_in_gitlab(f, user)
+    _review(f, user, "false_positive")
+    _record(f, user, "marked as false positive" + (" and dismissed in GitLab" if dismissed else ""), None, db)
+    return {"ok": True, "dismissed": dismissed}
+
+
+@app.post("/api/findings/{fid}/confirm")
+def confirm_real(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """A person confirms a Needs review finding as real; the analysis is queued again to write and validate its fix
+    (only this finding runs; see JobRunner.fix_confirmed)."""
+    check_csrf(request)
+    _finding_for(fid, user, db, act=True)
+    f = db.get(Finding, fid, with_for_update=True, populate_existing=True)
+    job = f.job
+    if job.status in ("queued", "running"):
+        raise HTTPException(409, "This analysis is still running.")
+    if f.status != "done" or f.verdict != "needs_review":
+        raise HTTPException(409, "Only a finding that needs review can be confirmed as real.")
+    if f.fix:
+        raise HTTPException(409, "This finding already has a proposed fix.")
+    _review(f, user, "true_positive")
+    f.status, f.error = "pending", None
+    job.status, job.finished_at, job.error = "queued", None, None
+    job.progress = "Queued to write the fix for a confirmed finding"
+    _record(f, user, "confirmed as real; fix requested", None, db)
+    log.info("%s confirmed finding %s of job %s as real", user.username, f.id, job.id)
+    return {"status": job.status}
 
 
 @app.post("/api/findings/{fid}/mr")

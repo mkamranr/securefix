@@ -46,13 +46,30 @@ the model was thinking, and the summary shows the average time per analyzed find
 
 Expanded, every finding shows:
 
-- **Verdict**: *Real*, *False positive* or *Needs review* (the independent runs disagreed);
+- **Verdict**: *Real*, *False positive* or *Needs review* (the independent runs disagreed, or the deciding code
+  wasn't in what the model saw);
 - **Confidence**, the verdict of each independent run, the analysis time and the tokens the model generated;
 - **Reasoning** and **evidence** (source, sink, mitigations);
 - the **proposed fix** as a diff, with its validation output (build, tests, re-scan);
 - **the code the model saw**: every excerpt and why it was included;
 - a warning if the code contains text addressed to an AI or reviewer (treat that verdict with suspicion);
-- a *Copied* tag, with a link, when the analysis was copied from an earlier scan.
+- a *Copied* tag, with a link, when the analysis was copied from an earlier scan;
+- **How the runs saw it**, for *Needs review* (or whenever the runs disagreed): each run's verdict, confidence,
+  source, sink, mitigations, reasoning and evidence side by side, so you can see where they differ;
+- a *Reviewed* tag and who settled it, once a person confirmed or rejected a *Needs review* finding.
+
+### Settling a *Needs review* finding
+Read how each run saw it and check the cited lines (and *the code the model saw*: a missing file is a common reason).
+Then choose one:
+
+- **Confirm as real & generate fix**: the analysis runs again for this finding only. The model writes and validates
+  a fix just as it does for a finding it judged real; triage isn't repeated. The fix then appears with an
+  *Open fix merge request* button.
+- **Mark as false positive**: records your decision. When the finding has a vulnerability record (default branch),
+  it is also dismissed in GitLab with the model's reasoning as the comment.
+
+Your decision becomes the verdict (the model's one is kept and shown), and it is copied to later scans of the same
+code. A posted analysis says who confirmed it. The Excel report has a *Reviewed by* column.
 
 ## 5. Take action
 | Action | Notes |
@@ -61,6 +78,7 @@ Expanded, every finding shows:
 | **Post several at once** | Tick analyzed findings in the list (or the header box for all of them) and choose *Post N to GitLab issues*. Already-posted analyses can't be selected. |
 | **Open fix merge request** | New branch from the analyzed commit, one commit with the fix, MR into the analyzed branch. |
 | **Dismiss as false positive** | Only for findings with a vulnerability record (default branch). Never automatic. |
+| **Confirm as real & generate fix** / **Mark as false positive** | Only for *Needs review* findings; see *Settling a Needs review finding* above. |
 | **Open vulnerability in GitLab** | Opens the vulnerability page, or the pipeline's security report on branches without a record yet. |
 | **Retry failed** | Analyzes only the findings that failed (e.g. the model was unreachable), in the same analysis. |
 | **Run again** | Starts a new analysis of the same commit with the same thinking setting and the current *Code per finding* budget. Unchanged findings are copied; a new result from the model can be posted to the same issue. |

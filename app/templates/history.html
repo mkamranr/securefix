@@ -20,7 +20,7 @@
 {% else %}
 <div class="table-wrap">
 <table class="grid">
-  <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Thinking</th><th class="num">Real</th><th class="num">Review</th><th class="num">False positive</th><th>Started</th>{% if scope != 'mine' %}<th>By</th>{% endif %}<th><span class="visually-hidden">Report</span></th></tr></thead>
+  <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Thinking</th><th class="num">Real</th><th class="num">Review</th><th class="num">False positive</th><th>Started</th><th>Finished</th>{% if scope != 'mine' %}<th>By</th>{% endif %}<th><span class="visually-hidden">Report</span></th></tr></thead>
   <tbody>
   {% for j in jobs %}{% set c = counts.get(j.id, {}) %}
     <tr>
@@ -35,6 +35,7 @@
       <td class="num {{ 'num-review' if c.get('needs_review') }}">{{ c.get('needs_review', 0) }}</td>
       <td class="num {{ 'num-fp' if c.get('false_positive') }}">{{ c.get('false_positive', 0) }}</td>
       <td>{{ j.created_at | ago }}</td>
+      <td>{% if j.finished_at %}{{ j.finished_at | ago }}{% else %}<span class="muted">—</span>{% endif %}</td>
       {% if scope != 'mine' %}<td>{{ j.user.username }}</td>{% endif %}
       <td><a class="xlsx-link" href="/jobs/{{ j.id }}/report.xlsx" download title="Download analysis #{{ j.id }} as an Excel report">{{ icon('download') }} Excel</a></td>
     </tr>

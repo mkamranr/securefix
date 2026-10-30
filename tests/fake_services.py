@@ -152,7 +152,12 @@ async def new_mr(request: Request): return {"iid": 7, "web_url": "http://gl/grp/
 
 @gitlab.post("/api/graphql")
 async def graphql(request: Request):
-    q = (await request.json())["query"]
+    body = await request.json()
+    q = body["query"]
+    if "vulnerabilityDismiss" in q:
+        gitlab.state.setdefault("dismissed", []).append(body["variables"])
+        return {"data": {"vulnerabilityDismiss": {"vulnerability": {"id": body["variables"]["id"], "state": "DISMISSED"},
+                                                  "errors": []}}}
     if "securityReportSummary" in q:
         return {"data": {"project": {"pipeline": {"securityReportSummary": {"sast": {"vulnerabilitiesCount": 2}}}}}}
     if "securityReportFindings" in q:

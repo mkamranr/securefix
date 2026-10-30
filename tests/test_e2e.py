@@ -709,6 +709,104 @@ def test_retry_failed_findings(client, fake_services, monkeypatch):
     assert client.post(f"/api/jobs/{job_id}/retry-failed", headers=h).status_code == 409  # nothing left to retry
 
 
+def _split_low_vote(monkeypatch):
+    """The first triage run of the low finding says it is real, so its runs disagree; returns the model calls."""
+    import threading
+    from app.llm_client import LLMClient
+    real, calls, lock, seen = LLMClient.chat_json, [], threading.Lock(), {"low": 0}
+
+    def chat(self, system, user, *a, **kw):
+        res, raw = real(self, system, user, *a, **kw)
+        with lock:
+            calls.append(("triage" if "triaging" in system else "fix", "app.py:17" in user and "low" or "high"))
+            if calls[-1] == ("triage", "low"):
+                seen["low"] += 1
+                if seen["low"] == 1:
+                    res = {**res, "verdict": "true_positive", "confidence": 0.6,
+                           "reasoning": "The value could come from the request."}
+        return res, raw
+    monkeypatch.setattr(LLMClient, "chat_json", chat)
+    return calls
+
+
+def test_needs_review_confirmed_as_real(client, fake_services, monkeypatch):
+    """A reviewer sees every run's argument, confirms the finding as real, and only its fix is written."""
+    from app.analyzer import JobRunner
+    from app.db import AnalysisJob, SessionLocal
+    from app.worker import _claim_next
+    h = {"X-CSRF-Token": csrf(client, "/")}
+    _forget_results()
+    calls = _split_low_vote(monkeypatch)
+    job_id = _new_job(client, h, fake_services)
+    JobRunner(job_id).run()
+    high, low = client.get(f"/api/jobs/{job_id}").json()["findings"]
+    assert low["verdict"] == "needs_review" and low["fix"] is None and low["reviewed"] is None
+    assert sorted(v["verdict"] for v in low["votes"]) == ["false_positive", "false_positive", "true_positive"]
+    assert all(v["reasoning"] and v["source"] and v["sink"] for v in low["votes"])
+
+    assert client.post(f"/api/findings/{low['id']}/confirm").status_code == 403  # CSRF
+    assert client.post(f"/api/findings/{high['id']}/confirm", headers=h).status_code == 409  # already real
+    with SessionLocal() as db:  # not while it runs
+        db.get(AnalysisJob, job_id).status = "running"
+        db.commit()
+    assert client.post(f"/api/findings/{low['id']}/confirm", headers=h).status_code == 409
+    with SessionLocal() as db:
+        db.get(AnalysisJob, job_id).status = "done"
+        db.commit()
+    assert client.post(f"/api/findings/{low['id']}/confirm", headers=h).json() == {"status": "queued"}
+    queued = client.get(f"/api/jobs/{job_id}").json()["findings"][1]
+    assert queued["status"] == "pending" and queued["verdict"] == "true_positive"
+    assert queued["reviewed"]["by"] == "alice" and queued["reviewed"]["from_verdict"] == "needs_review"
+
+    calls.clear()
+    assert _claim_next() == job_id
+    JobRunner(job_id).run()
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["status"] == "done"
+    high2, low2 = job["findings"]
+    assert high2 == high
+    assert calls and set(calls) == {("fix", "low")}  # no triage again (a failed validation retries the fix)
+    assert low2["status"] == "done" and low2["verdict"] == "true_positive" and low2["error"] is None
+    assert "(name,)" in low2["diff"] and low2["validation_status"]
+    assert low2["votes"] == low["votes"] and low2["reasoning"] == low["reasoning"]
+    assert client.post(f"/api/findings/{low['id']}/confirm", headers=h).status_code == 409  # settled
+
+    iid = client.post(f"/api/findings/{low['id']}/note", headers=h).json()["issue_iid"]
+    note = next(i for i in fake_services.gitlab.state["issues"] if i["iid"] == iid)["notes"][-1]
+    assert note.startswith("**Real vulnerability: confirmed by alice after the automated triage needed review**")
+
+
+def test_needs_review_marked_false_positive(client, fake_services, monkeypatch):
+    """Marking a Needs review finding as a false positive dismisses it in GitLab, and a later scan copies the decision."""
+    from app.analyzer import JobRunner
+    from app.db import Finding, SessionLocal
+    h = {"X-CSRF-Token": csrf(client, "/")}
+    _forget_results()
+    _split_low_vote(monkeypatch)
+    job_id = _new_job(client, h, fake_services)
+    JobRunner(job_id).run()
+    high, low = client.get(f"/api/jobs/{job_id}").json()["findings"]
+    assert low["verdict"] == "needs_review"
+    assert client.post(f"/api/findings/{high['id']}/false-positive", headers=h).status_code == 409
+    gid = "gid://gitlab/Vulnerability/42"
+    with SessionLocal() as db:
+        db.get(Finding, low["id"]).vulnerability_gid = gid
+        db.commit()
+    fake_services.gitlab.state["dismissed"] = []
+    r = client.post(f"/api/findings/{low['id']}/false-positive", headers=h).json()
+    assert r == {"ok": True, "dismissed": True}
+    assert [d["id"] for d in fake_services.gitlab.state["dismissed"]] == [gid]
+    low = client.get(f"/api/jobs/{job_id}").json()["findings"][1]
+    assert low["verdict"] == "false_positive" and low["reviewed"]["from_verdict"] == "needs_review"
+    assert low["actions"][-1]["type"] == "marked as false positive and dismissed in GitLab"
+
+    later = _new_job(client, h, fake_services)  # same code: copies the reviewed verdict
+    JobRunner(later).run()
+    copy = client.get(f"/api/jobs/{later}").json()["findings"][1]
+    assert copy["copied_from"]["finding"] == low["id"]
+    assert copy["verdict"] == "false_positive" and copy["reviewed"]["by"] == "alice"
+
+
 def test_shared_analysis_is_read_only(client, fake_services):
     """Other users who are Developer or higher on the project can view an analysis and export it, but not act on it."""
     from app import main

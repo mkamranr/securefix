@@ -391,6 +391,13 @@ body.auth { background: radial-gradient(1200px 600px at 20% 0%, #13305a 0%, var(
 .f-title { font-weight: 600; }
 .tag-copied { display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px;
   font-size: 0.7rem; font-weight: 600; vertical-align: 0.1em; color: var(--ink-2); background: var(--wait-bg); }
+.reviewed-note { padding: 0.55rem 0.75rem; border-left: 3px solid var(--review); background: var(--review-bg);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.runs { margin-top: 0.9rem; }
+.run-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.75rem; margin-top: 0.5rem; }
+.run { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; background: var(--surface-2); }
+.run h4 { margin: 0 0 0.4rem; display: flex; gap: 0.5rem; align-items: center; }
+.run p { margin: 0.2rem 0; font-size: 0.88rem; color: var(--ink-2); }
 .copied-note { padding: 0.55rem 0.75rem; border-left: 3px solid var(--accent); background: var(--wait-bg);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .f-loc { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); overflow-wrap: anywhere; text-align: right; }

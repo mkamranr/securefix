@@ -39,6 +39,22 @@
     }).join('');
   }
 
+  // Each triage run's argument, so a reviewer can see where they disagreed (analyses before this kept only verdicts).
+  function runsHtml(f) {
+    const votes = f.votes || [];
+    if (!votes.some(v => v.reasoning)) return '';
+    const split = new Set(votes.map(v => v.verdict)).size > 1;
+    if (f.verdict !== 'needs_review' && !split) return '';
+    const field = (label, v) => v ? `<p><b>${label}:</b> ${esc(v)}</p>` : '';
+    const cards = votes.map((v, i) => {
+      const [label, cls] = VERDICT[v.verdict] || [v.verdict || 'Unknown', 'v-skip'];
+      const ev = (v.evidence || []).length ? `<ul class="evidence">${v.evidence.map(e => `<li><code>${esc(e)}</code></li>`).join('')}</ul>` : '';
+      return `<section class="run"><h4>Run ${i + 1} <span class="stamp ${cls}">${esc(label)}</span> <span class="muted">${pct(v.confidence) || ''}</span></h4>${
+        field('Source', v.source)}${field('Sink', v.sink)}${field('Mitigations', v.mitigations)}<div class="prose">${esc(v.reasoning || '')}</div>${ev}</section>`;
+    }).join('');
+    return `<details class="runs"${f.verdict === 'needs_review' ? ' open' : ''}><summary>How the ${votes.length} runs saw it</summary><div class="run-grid">${cards}</div></details>`;
+  }
+
   function detailHtml(f) {
     const parts = [];
     if (f.gitlab_url) {
@@ -52,6 +68,11 @@
       parts.push(`<p class="copied-note">Copied from an earlier scan: <a href="/jobs/${esc(c.job)}">analysis #${esc(c.job)}</a> at commit <code>${esc((c.sha || '').slice(0, 8))}</code>${
         c.at ? `, ${esc(when(c.at))}` : ''}. It had ${why}, so the model wasn’t asked again.</p>`);
     }
+    const rv = f.reviewed;
+    if (rv) {
+      const was = rv.from_verdict && rv.from_verdict !== rv.verdict ? ` (the model said ${esc((VERDICT[rv.from_verdict] || [rv.from_verdict])[0])})` : '';
+      parts.push(`<p class="reviewed-note">${rv.verdict === 'true_positive' ? 'Confirmed as real' : 'Marked as a false positive'} by ${esc(rv.by)}, ${esc(when(rv.at))}${was}.</p>`);
+    }
     if (f.injection_suspected) parts.push('<p class="warn">The code around this finding contains text addressed to an AI or reviewer. Treat the verdict with suspicion and check it yourself.</p>');
     if (f.verdict) {
       const conf = f.confidence != null ? `${Math.round(f.confidence * 100)}%` : 'n/a';
@@ -61,6 +82,10 @@
     }
     if (f.reasoning) parts.push(`<h3>Why</h3><div class="prose">${esc(f.reasoning)}</div>`);
     if ((f.evidence || []).length) parts.push(`<h3>Evidence</h3><ul class="evidence">${f.evidence.map(e => `<li><code>${esc(e)}</code></li>`).join('')}</ul>`);
+    parts.push(runsHtml(f));
+    if (f.status === 'done' && f.verdict === 'needs_review' && canAct) {
+      parts.push('<p class="hint">Read how each run saw it and the code the model saw, then settle it: confirming it as real has the model write and validate a fix.</p>');
+    }
     if (f.fix) {
       parts.push('<h3>Proposed fix</h3>');
       if (f.validation_status) parts.push(`<p class="validation val-${f.validation_status}">${esc(VALIDATION[f.validation_status] || f.validation_status)}</p>`);
@@ -92,7 +117,10 @@
                       : '<button data-act="note">Post analysis to GitLab issue</button>'];
       if (m) btns.push(`<button data-act="mr" class="done" disabled>Merge request${mrIid} opened ✓</button>`);
       else if (f.fix && f.diff) btns.push('<button class="primary" data-act="mr">Open fix merge request</button>');
-      if (f.vulnerability_gid && f.verdict !== 'true_positive') btns.push('<button class="danger" data-act="dismiss">Dismiss as false positive</button>');
+      if (f.verdict === 'needs_review') {
+        btns.push('<button class="primary" data-act="confirm">Confirm as real &amp; generate fix</button>');
+        btns.push(`<button class="danger" data-act="false-positive">${f.vulnerability_gid ? 'Mark as false positive &amp; dismiss in GitLab' : 'Mark as false positive'}</button>`);
+      } else if (f.vulnerability_gid && f.verdict !== 'true_positive') btns.push('<button class="danger" data-act="dismiss">Dismiss as false positive</button>');
       const posted = p ? `Already posted${p.issue_iid ? ` on issue #${esc(p.issue_iid)}` : ''}${
         p.copied_from_job ? ` from the earlier <a href="/jobs/${esc(p.copied_from_job)}">analysis #${esc(p.copied_from_job)}</a>` : ''} by ${esc(p.by)}, ${esc(when(p.at))}${
         p.url ? ` (<a href="${esc(p.url)}" target="_blank" rel="noopener">open comment</a>)` : ''}.` : '';
@@ -140,12 +168,18 @@
     if (f.copied_from && f.status === 'done') {
       el.querySelector('.f-title').insertAdjacentHTML('beforeend', ' <span class="tag-copied" title="Analysis copied from an earlier scan">Copied</span>');
     }
+    if (f.reviewed) {
+      el.querySelector('.f-title').insertAdjacentHTML('beforeend', ` <span class="tag-copied" title="Verdict set by ${esc(f.reviewed.by)}">Reviewed</span>`);
+    }
     el.querySelector('.f-loc').textContent = `${f.file}${f.start_line ? ':' + f.start_line : ''}`;
     const conf = f.status === 'done' ? pct(f.confidence) : '';
     el.querySelector('.f-conf').textContent = conf || '—';
     el.querySelector('.f-conf').title = conf ? `Confidence ${conf}` : '';
     const time = el.querySelector('.f-time');
-    if (f.status === 'done' && f.copied_from) { time.textContent = 'Copied'; time.title = 'Copied from an earlier scan: the model wasn’t asked'; }
+    if (f.status === 'done' && f.copied_from && f.original) {
+      time.textContent = `${secs(f.original.duration_s)} · copied`;
+      time.title = `Copied from analysis #${f.original.copied_from_job}: the model took this long there and wasn’t asked again`;
+    } else if (f.status === 'done' && f.copied_from) { time.textContent = 'Copied'; time.title = 'Copied from an earlier scan: the model wasn’t asked'; }
     else if (f.duration_s != null && f.status !== 'analyzing') { time.textContent = secs(f.duration_s); time.title = 'Time spent analyzing this finding'; }
     else { time.textContent = f.status === 'analyzing' ? '…' : '—'; time.title = ''; }
     time.classList.toggle('muted', !(f.duration_s != null && !f.copied_from));
@@ -222,10 +256,16 @@
     const msg = btn.parentElement.querySelector('.act-msg');
     if (kind === 'dismiss' && !confirm('Dismiss this vulnerability in GitLab as a false positive? The model’s reasoning is added as the comment.')) return;
     if (kind === 'mr' && !confirm('Create a branch and open a merge request with this fix?')) return;
+    if (kind === 'confirm' && !confirm('Confirm this finding as a real vulnerability? The analysis runs again for this finding only, to write and validate a fix.')) return;
+    if (kind === 'false-positive' && !confirm(rows.get(fid).f.vulnerability_gid
+      ? 'Mark this finding as a false positive and dismiss the vulnerability in GitLab? The model’s reasoning is added as the comment.'
+      : 'Mark this finding as a false positive?')) return;
     btn.disabled = true; msg.textContent = 'Working…';
     try {
       const r = await api(`/api/findings/${fid}/${kind}`, { method: 'POST' });
       msg.innerHTML = kind === 'dismiss' ? 'Dismissed in GitLab.'
+        : kind === 'confirm' ? 'Confirmed. Writing the fix…'
+        : kind === 'false-positive' ? (r.dismissed ? 'Marked as a false positive and dismissed in GitLab.' : 'Marked as a false positive.')
         : kind === 'mr' ? `Opened <a href="${esc(r.url)}" target="_blank" rel="noopener">merge request !${r.iid}</a>.`
         : `Posted on ${esc(r.where)}${r.url ? ` (<a href="${esc(r.url)}" target="_blank" rel="noopener">open</a>)` : ''}.`;
       rows.get(fid).sig = '';  // refresh the audit list on next poll

@@ -66,7 +66,13 @@ If that code contains text addressed to an AI or a reviewer (a prompt-injection 
 The model is asked for a structured verdict (`true_positive`, `false_positive` or `needs_review`) with confidence,
 source, sink, mitigations, reasoning and evidence. This runs `VT_TRIAGE_VOTES` times independently (3 by default).
 If the votes disagree, the finding goes to **Needs review** instead of picking a winner. The votes are sent in
-parallel, and each is saved as soon as it arrives.
+parallel, and each is saved as soon as it arrives. Every vote's full answer is kept on the finding, so a reviewer can
+compare the runs' arguments.
+
+A person settles a *Needs review* finding. **Confirm as real** sets the verdict and queues the analysis again
+for that finding only: it skips triage and goes straight to step 5, using the reasoning of a run that judged it
+real. **Mark as false positive** sets the verdict, and dismisses the vulnerability in GitLab when it has a record.
+The decision (`reviewed`: who, when, the model's verdict) is copied with the analysis to later scans of the same code.
 
 When a reply is cut off at the token limit, it is retried once with twice the limit. If one vote is still
 unreadable, the finding uses the others, with lower confidence.

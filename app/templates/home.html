@@ -23,7 +23,7 @@
     {% if recent %}
     <div class="table-wrap">
       <table class="grid">
-        <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Started</th></tr></thead>
+        <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead>
         <tbody>
         {% for j in recent %}
           <tr>
@@ -33,6 +33,7 @@
             <td><code>{{ j.sha[:8] }}</code></td>
             <td><span class="state state-{{ j.status }}">{{ j.status | capitalize }}</span></td>
             <td>{{ j.created_at | ago }}</td>
+            <td>{% if j.finished_at %}{{ j.finished_at | ago }}{% else %}<span class="muted">—</span>{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>

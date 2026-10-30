@@ -46,6 +46,7 @@ COLUMNS = [
     ("Fix proposed", 13, CENTER), ("Fix validation", 15, TOP), ("Fix MR", 10, CENTER), ("Dismissed", 11, CENTER),
     ("Copied from", 13, CENTER), ("Scanner", 18, TOP), ("Status", 11, TOP), ("Analysis time (s)", 12, CENTER),
     ("Tokens generated", 12, CENTER), ("Reasoning", 80, WRAP), ("Error", 40, WRAP),
+    ("Reviewed by", 14, TOP),  # last, so earlier columns keep their letters
 ]
 
 
@@ -169,6 +170,7 @@ def _findings_sheet(ws, job, gitlab_url: str):
             ((f.completion_tokens or "") if not copied else "", {"fmt": "#,##0", "align": CENTER}),
             (f.reasoning or "", {"align": WRAP}),
             (f.error or "", {"align": WRAP}),
+            ((getattr(f, "reviewed", None) or {}).get("by", ""), {}),
         ]
         band = PatternFill("solid", fgColor=BAND) if row % 2 else None
         for col, (value, opts) in enumerate(values, 1):

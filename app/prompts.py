@@ -191,6 +191,16 @@ def fix_mr(f) -> dict | None:
     return _follow_copies(f, _own_fix_mr)
 
 
+def _own_time(f) -> dict | None:
+    return {"duration_s": f.duration_s} if f.status == "done" and not f.copied_from and f.duration_s is not None else None
+
+
+def original_time(f) -> dict | None:
+    """For a copied analysis, the time the model took on the analysis it was (ultimately) copied from; a copy's own
+    `duration_s` is only the time copying took."""
+    return _follow_copies(f, _own_time) if f.copied_from else None
+
+
 def issue_markdown(f, job, gitlab_url: str, marker: str) -> str:
     """Description of the issue created for a finding; the triage itself goes in as a comment."""
     base = f"{gitlab_url}/{job.project_path}"
@@ -217,8 +227,11 @@ def note_markdown(f) -> str:
                "needs_review": "Needs human review"}.get(f.verdict or "", f.verdict or "Not analyzed")
     conf = f" (confidence {f.confidence:.0%})" if f.confidence is not None else ""
     ev = "\n".join(f"- `{e}`" for e in (f.evidence or [])[:15])
-    parts = [f"**Automated triage: {verdict}{conf}**", "", f"Finding: {f.title} at `{f.file}:{f.start_line}`", "",
-             f.reasoning or "", ""]
+    heading = f"**Automated triage: {verdict}{conf}**"
+    r = f.reviewed or {}
+    if r.get("verdict") == f.verdict and r.get("from_verdict") == "needs_review":
+        heading = f"**{verdict}: confirmed by {r.get('by')} after the automated triage needed review**"
+    parts = [heading, "", f"Finding: {f.title} at `{f.file}:{f.start_line}`", "", f.reasoning or "", ""]
     if ev:
         parts += ["Evidence:", ev, ""]
     if f.diff:
