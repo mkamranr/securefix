@@ -1,40 +1,40 @@
 {% extends "base.html" %}
 {% block title %}Analysis #{{ job.id }} · SecureFix{% endblock %}
-{% block main_class %}page wide{% endblock %}
+{% block container_class %}container-fluid{% endblock %}
 {% block content %}
 <div id="job" data-job-id="{{ job.id }}" data-can-act="{{ 1 if can_act else 0 }}">
-  <header class="job-head">
+  <header class="page-header job-head">
     <div>
-      <p class="sub"><a href="/history">History</a> › Analysis #{{ job.id }}</p>
-      <h1><span id="job-project">{{ job.project_path }}</span></h1>
-      <p class="muted">Branch <strong>{{ job.branch }}</strong> at <code>{{ job.sha[:8] }}</code> · started by {{ job.user.username }} {{ job.created_at | ago }}</p>
-      <p class="muted">Severities analyzed: {% for s in (job.severities or ['all']) %}<span class="sev sev-{{ s }}">{{ s }}</span> {% endfor %}
+      <div class="page-pretitle"><a href="/history">History</a> › Analysis #{{ job.id }}</div>
+      <h1 class="page-title"><span id="job-project">{{ job.project_path }}</span></h1>
+      <p class="text-secondary">Branch <strong>{{ job.branch }}</strong> at <code>{{ job.sha[:8] }}</code> · started by {{ job.user.username }} {{ job.created_at | ago }}</p>
+      <p class="text-secondary">Severities analyzed: {% for s in (job.severities or ['all']) %}<span class="sev sev-{{ s }}">{{ s }}</span> {% endfor %}
         · Model thinking: <span class="chip-think chip-think-{{ job.thinking or 'on' }}">{{ (job.thinking or 'on') | capitalize }}</span>
         · Code per finding: up to {{ "{:,}".format(job.budget) }} tokens</p>
     </div>
     <div class="job-actions">
       <span id="job-status" class="state state-{{ job.status }}">{{ job.status | capitalize }}</span>
-      <button id="cancel" hidden>Cancel</button>
-      <button id="retry-failed" hidden>Retry failed</button>
-      <button id="rerun" hidden>Run again</button>
-      <button id="rerun-other" hidden data-thinking="{{ 'off' if (job.thinking or 'on') == 'on' else 'on' }}">Run with thinking {{ 'off' if (job.thinking or 'on') == 'on' else 'on' }}</button>
-      <a id="download-report" class="button" href="/jobs/{{ job.id }}/report.xlsx" download hidden>{{ icon('download') }} Download report (Excel)</a>
+      <button class="btn btn-outline-danger" id="cancel" hidden>Cancel</button>
+      <button class="btn" id="retry-failed" hidden>Retry failed</button>
+      <button class="btn" id="rerun" hidden>Run again</button>
+      <button class="btn" id="rerun-other" hidden data-thinking="{{ 'off' if (job.thinking or 'on') == 'on' else 'on' }}">Run with thinking {{ 'off' if (job.thinking or 'on') == 'on' else 'on' }}</button>
+      <a id="download-report" class="btn btn-primary" href="/jobs/{{ job.id }}/report.xlsx" download hidden>{{ icon('file-spreadsheet', 'i me-2') }}Excel report</a>
     </div>
   </header>
-  {% if not can_act %}<p class="info" role="note"><strong>Read-only:</strong> started by {{ job.user.username }}. You can view the results and download the Excel report. To act on findings, use <em>Run again</em> to start your own analysis.</p>{% endif %}
-  <p id="job-progress" class="progress" role="status" aria-live="polite">{{ job.progress }}</p>
-  <p id="job-error" class="error" role="alert" hidden></p>
+  {% if not can_act %}<p class="alert alert-info" role="note"><strong>Read-only:</strong> started by {{ job.user.username }}. You can view the results and download the Excel report. To act on findings, use <em>Run again</em> to start your own analysis.</p>{% endif %}
+  <p id="job-progress" class="job-progress" role="status" aria-live="polite">{{ job.progress }}</p>
+  <p id="job-error" class="alert alert-danger" role="alert" hidden></p>
   <div id="summary" class="summary" hidden></div>
-  <div class="filters" id="filters" hidden role="group" aria-label="Filter findings">
-    <button data-filter="all" aria-pressed="true">All</button>
-    <button data-filter="true_positive" aria-pressed="false">Real</button>
-    <button data-filter="needs_review" aria-pressed="false">Needs review</button>
-    <button data-filter="false_positive" aria-pressed="false">False positive</button>
+  <div class="btn-group filters mb-3" id="filters" hidden role="group" aria-label="Filter findings">
+    <button class="btn" data-filter="all" aria-pressed="true">All</button>
+    <button class="btn" data-filter="true_positive" aria-pressed="false">Real</button>
+    <button class="btn" data-filter="needs_review" aria-pressed="false">Needs review</button>
+    <button class="btn" data-filter="false_positive" aria-pressed="false">False positive</button>
   </div>
   <div class="bulkbar" id="bulkbar" hidden>
     <span id="sel-count" class="sel-count">No findings selected</span>
-    <button class="primary" id="post-selected" disabled>Post analysis to GitLab issues</button>
-    <button class="link" id="clear-sel" hidden>Clear selection</button>
+    <button class="btn btn-primary" id="post-selected" disabled>Post analysis to GitLab issues</button>
+    <button class="btn btn-link" id="clear-sel" hidden>Clear selection</button>
     <span id="bulk-msg" class="act-msg" role="status" aria-live="polite"></span>
   </div>
   <div class="ledger">

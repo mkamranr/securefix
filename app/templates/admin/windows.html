@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% block title %}Windows sign-in · Admin · SecureFix{% endblock %}
+{% block content %}
+{{ ui.page_header('Windows sign-in (Active Directory)', 'Lets people sign in with their Windows username and password. Their profile is created on first sign-in; their password stays in Active Directory, so they can\'t change or reset it here.', 'Administration') }}
+{{ ui.flash(saved, error) }}
+
+<form method="post" action="/admin/ldap" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card-header">
+    <h2 class="card-title">Directory connection</h2>
+    <div class="card-actions">{% if ldap.enabled %}<span class="badge badge-on">On</span>{% else %}<span class="badge">Off</span>{% endif %}</div>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="enabled" value="1" {% if ldap.enabled %}checked{% endif %}>
+          <span class="form-check-label">Allow Windows sign-in</span>
+        </label>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="l-url">Server URL</label>
+        <input class="form-control" id="l-url" name="server_url" value="{{ ldap.server_url }}" placeholder="ldaps://dc01.corp.example.com:636">
+        <div class="form-hint">Use <code>ldaps://</code> (port 636), or <code>ldap://</code> with StartTLS. Several domain controllers: use the domain's DNS name.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="l-domain">Domain</label>
+        <input class="form-control" id="l-domain" name="domain" value="{{ ldap.domain }}" placeholder="corp.example.com">
+        <div class="form-hint">UPN suffix. Needed when there is no service account: users are checked as <code>user@domain</code>.</div>
+      </div>
+      <div class="col-12">
+        <label class="form-label" for="l-base">Base DN</label>
+        <input class="form-control" id="l-base" name="base_dn" value="{{ ldap.base_dn }}" placeholder="DC=corp,DC=example,DC=com">
+        <div class="form-hint">Where user accounts are searched, e.g. the whole domain or an OU.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="l-bind">Service account DN (optional)</label>
+        <input class="form-control" id="l-bind" name="bind_dn" value="{{ ldap.bind_dn }}" placeholder="CN=svc-vulntriage,OU=Service Accounts,DC=corp,DC=example,DC=com" autocomplete="off">
+        <div class="form-hint">A read-only account used to look users up. Recommended.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="l-pass">Service account password</label>
+        <input class="form-control" id="l-pass" name="bind_password" type="password" autocomplete="new-password" placeholder="{{ 'A password is saved; leave blank to keep it' if ldap.has_bind_password else '' }}">
+      </div>
+      <div class="col-12">
+        <label class="form-label" for="l-filter">User filter</label>
+        <input class="form-control font-monospace" id="l-filter" name="user_filter" value="{{ ldap.user_filter }}" spellcheck="false">
+        <div class="form-hint"><code>{username}</code> becomes the name the user typed, without <code>DOMAIN\</code> or <code>@domain</code>.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="l-group">Allowed group DN (optional)</label>
+        <input class="form-control" id="l-group" name="required_group" value="{{ ldap.required_group }}" placeholder="CN=AppSec Triage,OU=Groups,DC=corp,DC=example,DC=com">
+        <div class="form-hint">Only members (including nested groups) can sign in. Empty: every account the filter finds.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="l-admin">Admin group DN (optional)</label>
+        <input class="form-control" id="l-admin" name="admin_group" value="{{ ldap.admin_group }}" placeholder="CN=AppSec Admins,OU=Groups,DC=corp,DC=example,DC=com">
+        <div class="form-hint">Members become administrators, others users, on every sign-in. Empty: roles are set on the Users page.</div>
+      </div>
+      <div class="col-12">
+        <label class="form-check">
+          <input class="form-check-input" type="checkbox" name="start_tls" value="1" {% if ldap.start_tls %}checked{% endif %}>
+          <span class="form-check-label">Use StartTLS (for <code>ldap://</code> URLs)</span>
+        </label>
+        <label class="form-check">
+          <input class="form-check-input" type="checkbox" name="verify_cert" value="1" {% if ldap.verify_cert %}checked{% endif %}>
+          <span class="form-check-label">Verify the server certificate (uses <code>certs/ca.pem</code>)</span>
+        </label>
+        {% if ldap.has_bind_password %}<label class="form-check">
+          <input class="form-check-input" type="checkbox" name="clear_bind_password" value="1">
+          <span class="form-check-label">Remove the saved service account password</span>
+        </label>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card-footer"><button class="btn btn-primary">Save Windows sign-in settings</button></div>
+</form>
+
+<form method="post" action="/admin/ldap/test" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card-header"><div><h2 class="card-title">Test the saved settings</h2>
+    <p class="card-subtitle">Connects to the directory, and looks a user up if you enter one.</p></div></div>
+  <div class="card-body">
+    <div class="row g-2 align-items-center">
+      <div class="col-md-6">
+        <label class="visually-hidden" for="ldap-lookup">Windows username to look up</label>
+        <input class="form-control" id="ldap-lookup" name="lookup" placeholder="Optional: a username to look up">
+      </div>
+      <div class="col-auto"><button class="btn">Test saved settings</button></div>
+    </div>
+  </div>
+</form>
+{% endblock %}

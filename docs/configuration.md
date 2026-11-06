@@ -8,14 +8,14 @@ the full list. Some model settings can also be changed by administrators on the 
 | Variable | Purpose |
 | --- | --- |
 | `VT_GITLAB_URL` | Base URL of the self-hosted GitLab |
-| `VT_GITLAB_OAUTH_ID`, `VT_GITLAB_OAUTH_SECRET` | Optional defaults for [GitLab sign-in](#gitlab-sign-in); usually set on the Admin page instead |
-| `VT_PUBLIC_URL` | The app's address as users open it, e.g. `https://securefix.internal`. Only needed when the callback URL the Admin page shows is wrong |
+| `VT_GITLAB_OAUTH_ID`, `VT_GITLAB_OAUTH_SECRET` | Optional defaults for [GitLab sign-in](#gitlab-sign-in); usually set under **Administration › GitLab sign-in** instead |
+| `VT_PUBLIC_URL` | The app's address as users open it, e.g. `https://securefix.internal`. Only needed when the callback URL shown under **Administration › GitLab sign-in** is wrong |
 | `VT_LLM_BASE_URL`, `VT_LLM_MODEL` | vLLM endpoint and served model name. These and the other `VT_LLM_*` values are defaults (see [Model settings](#model-settings-admin-page)) |
 | `VT_LLM_API_KEY` | API key for vLLM, if it requires one |
 | `VT_LLM_STRUCTURED_OUTPUT` | `true` to request `response_format: json_schema` from vLLM |
 | `VT_SECRET_KEY` | Master secret for sessions and token encryption. Never change it after first use |
 | `POSTGRES_PASSWORD` | Password of the bundled Postgres |
-| `VT_CONTEXT_TOKEN_BUDGET` | Tokens of code per finding (default 100000; the model's window is larger, but precision drops on very long prompts). Administrators can change it on the Admin page as *Code per finding* |
+| `VT_CONTEXT_TOKEN_BUDGET` | Tokens of code per finding (default 100000; the model's window is larger, but precision drops on very long prompts). Administrators can change it under **Administration › Local model** as *Code per finding* |
 | `VT_TRIAGE_VOTES` | Independent triage runs per finding (default 3) |
 | `VT_LLM_MAX_TOKENS` | Longest triage reply in tokens (default 4096, 1024 to 32768). A reply cut off at this limit is retried once with twice as many. The prompt plus the reply must fit the model's context length |
 | `VT_LLM_THINKING` | Default for new analyses: `true` lets a reasoning model (Qwen3) think before it answers, `false` answers directly (default `true`). Users choose per analysis; it is sent to vLLM as `chat_template_kwargs.enable_thinking`. Thinking uses part of `VT_LLM_MAX_TOKENS` |
@@ -28,11 +28,11 @@ the full list. Some model settings can also be changed by administrators on the 
 | `VT_COOKIE_SECURE` | `false` for plain HTTP; `true` behind the HTTPS proxy |
 | `COMPOSE_PROFILES=https`, `HTTPS_PORT` | Turn on the nginx HTTPS proxy and choose its host port (also set `VT_TRUSTED_PROXIES=*`) |
 
-## Model settings (Admin page)
+## Model settings (Administration › Local model)
 
 Administrators can override the vLLM URL, model, API key, timeout, *Parallel requests*, *Max tokens per reply*,
 *Code per finding* (4,000 to 1,000,000 tokens), *Thinking* (the default for new analyses) and structured output
-under **Admin › Local model (vLLM)**. The overrides are stored in the database and apply to new analyses without a
+under **Administration › Local model (LLM)**. The overrides are stored in the database and apply to new analyses without a
 restart. **Reset to the values in .env** undoes them.
 
 *Code per finding* is the most code the model sees for one finding. The code, prompts and reply (including the
@@ -47,17 +47,17 @@ gets their GitLab token from the sign-in. Nobody creates or pastes a token. Wind
 alongside it.
 
 1. In GitLab, as an administrator, open **Admin › Applications › New application**.
-2. Name it *SecureFix*. Set the **Redirect URI** to the callback URL shown under **Admin › GitLab sign-in** in this
+2. Name it *SecureFix*. Set the **Redirect URI** to the callback URL shown under **Administration › GitLab sign-in** in this
    app, e.g. `https://securefix.internal/login/gitlab/callback`.
 3. Tick **Trusted** (users aren't asked to approve the app) and **Confidential**, and the scopes `api` and
    `read_repository`.
-4. Save, then enter the **Application ID** and **Secret** under **Admin › GitLab sign-in**, tick
+4. Save, then enter the **Application ID** and **Secret** under **Administration › GitLab sign-in**, tick
    **Allow GitLab sign-in** and save. The login page now shows **Sign in with GitLab**.
 
 How accounts are matched:
 
 - The first GitLab sign-in creates a profile with the GitLab username. It is a normal user; administrators set roles
-  on the Admin page.
+  under **Administration › Users**.
 - If a **Windows** profile with the same username exists, it is reused, so the person keeps their analyses and role.
 - A **local** account with the same username is never linked, because that would let a GitLab account take it
   over. Rename or delete the local account first.
@@ -66,12 +66,13 @@ How accounts are matched:
 GitLab's OAuth tokens expire after two hours. The app renews them automatically with the refresh token, including
 during long analyses. If the token was revoked in GitLab, the user is asked to sign in with GitLab again.
 
-If the redirect URI shown on the Admin page isn't the address users open (for example behind a proxy that doesn't
+If the redirect URI shown under **Administration › GitLab sign-in** isn't the address users open (for example behind a proxy that doesn't
 pass the original host), set **App address** there or `VT_PUBLIC_URL`.
 
 ## GitLab tokens
 
-Users who sign in with GitLab don't need one. Everyone else saves their own token on the **Settings** page.
+Users who sign in with GitLab don't need one. While GitLab sign-in is on, the token form is hidden on **Settings**
+and people connect by signing in with GitLab. While it is off, everyone saves their own token on **Settings**.
 
 - `read_api` + `read_repository`: analyze commits.
 - `api`: also create and comment on issues, open fix merge requests and dismiss findings.
@@ -81,7 +82,7 @@ the Reporter role, and linking it to a vulnerability needs Developer.
 
 ## Windows sign-in
 
-Administrators set it up under **Admin › Windows sign-in (Active Directory)**:
+Administrators set it up under **Administration › Windows sign-in**:
 
 | Field | Example | Notes |
 | --- | --- | --- |
@@ -98,8 +99,9 @@ local account always wins over a Windows account with the same username.
 
 ## Fix validation
 
-For each GitLab project, administrators can set up to three commands under **Admin › Fix validation commands**. They run in a
-copy of the patched checkout, inside the worker container:
+The app can run up to three commands per GitLab project on each proposed fix. They run in a copy of the patched
+checkout, inside the worker container. The page that set them was removed from the app; commands saved there earlier
+still run, and without commands fixes are simply not validated (the job page then says nothing about validation):
 
 | Step | Example | Passes when |
 | --- | --- | --- |
@@ -107,7 +109,7 @@ copy of the patched checkout, inside the worker container:
 | Tests | `pytest -q` | exit code 0 |
 | Re-scan | `semgrep scan --metrics=off --config /opt/rules --error {files}` | exit code 0, i.e. the finding is gone |
 
-`{files}` becomes the changed files. Without commands, fixes are shown as *not validated*.
+`{files}` becomes the changed files.
 
 The worker image contains Python, git and semgrep, but not your projects' toolchains (JDK, Maven, Node, .NET…). To
 build and test those projects, extend the image on the build server before exporting:

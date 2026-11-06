@@ -1,79 +1,107 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Settings · SecureFix{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <h1>Settings</h1>
-    <p class="lede">Your GitLab connection and account.</p>
+{{ ui.page_header('Settings', 'Your GitLab connection, the system status and your account.') }}
+{{ ui.flash(saved, error) }}
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <section class="card mb-3" id="gitlab">
+      <div class="card-header">
+        <div class="d-flex align-items-center gap-2">
+          {{ icon('gitlab', 'i sf-card-icon') }}
+          <div>
+            <h2 class="card-title">GitLab connection</h2>
+            <p class="card-subtitle">The app reads findings and writes issues and merge requests as <em>you</em>, so it can only do what your account can do on <a href="{{ gitlab_url }}">{{ gitlab_url }}</a>.</p>
+          </div>
+        </div>
+        <div class="card-actions">{% if masked %}<span class="badge badge-on">Connected</span>{% else %}<span class="badge badge-warn">Not connected</span>{% endif %}</div>
+      </div>
+      <div class="card-body">
+      {% set signed_in = masked and user.gitlab_refresh_enc %}
+      {% if signed_in %}
+        <p class="connected mb-0">Connected as <strong>{{ user.gitlab_username }}</strong> through <em>Sign in with GitLab</em>. Nothing to set up: access is renewed automatically.</p>
+      {% elif masked %}
+        <p class="connected mb-0">Connected{% if user.gitlab_username %} as <strong>{{ user.gitlab_username }}</strong>{% endif %}{% if not gitlab_signin %} with token <code>{{ masked }}</code> ({{ 'OAuth token' if user.gitlab_token_type == 'oauth' else 'access token' }}){% endif %}.</p>
+      {% elif gitlab_signin %}
+        <p class="mb-3">Not connected. Sign out and choose <em>Sign in with GitLab</em> to connect your account.</p>
+        <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-primary">{{ icon('gitlab', 'i me-2') }}Sign out and sign in with GitLab</button></form>
+      {% else %}
+        <p class="text-secondary">No token saved yet. Add one to start analyzing commits.</p>
+      {% endif %}
+      {% if not gitlab_signin %}{# without GitLab sign-in, a personal token is the only way to connect #}
+        <form method="post" action="/settings/token" id="token" class="mt-3">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <div class="mb-3">
+            <div class="form-label">Token type</div>
+            <label class="form-check"><input class="form-check-input" type="radio" name="token_type" value="access_token" {% if user.gitlab_token_type != 'oauth' %}checked{% endif %}><span class="form-check-label">Personal, project or group access token</span></label>
+            <label class="form-check"><input class="form-check-input" type="radio" name="token_type" value="oauth" {% if user.gitlab_token_type == 'oauth' %}checked{% endif %}><span class="form-check-label">OAuth access token</span></label>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="s-token">Token</label>
+            <input class="form-control" id="s-token" name="token" type="password" autocomplete="off" required placeholder="glpat-…">
+            <div class="form-hint">Create it in GitLab under <em>User settings › Access tokens</em>. Scopes <code>read_api</code> and <code>read_repository</code> are enough to analyze commits. Use <code>api</code> instead to also post to issues, open fix merge requests and dismiss findings.</div>
+          </div>
+          <button class="btn btn-primary">{{ 'Replace token' if masked else 'Save token' }}</button>
+        </form>
+      {% endif %}
+      </div>
+      {% if masked %}
+      <div class="card-footer">
+        <form method="post" action="/settings/token/delete" data-confirm="Disconnect GitLab? You can't analyze commits until you connect again.">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="btn btn-ghost-danger btn-sm">{{ 'Disconnect GitLab' if (signed_in or gitlab_signin) else 'Remove token' }}</button>
+        </form>
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div class="d-flex align-items-center gap-2">
+          {{ icon('user', 'i sf-card-icon') }}
+          <div><h2 class="card-title">Account</h2><p class="card-subtitle">Signed in as <strong>{{ user.username }}</strong>{% if user.email %} ({{ user.email }}){% endif %}.</p></div>
+        </div>
+        <div class="card-actions">{{ ui.account_badge(user) }}</div>
+      </div>
+      <div class="card-body">
+      {% if user.is_gitlab %}
+        <p class="mb-0 text-secondary">You sign in with your GitLab account, so your password is managed in GitLab (or Windows, if GitLab uses it), not here.</p>
+      {% elif user.is_windows %}
+        <p class="mb-0 text-secondary">You sign in with your Windows account, so your password is managed in Windows, not here. To change or reset it, use Windows or ask your IT service desk.</p>
+      {% else %}
+        <form method="post" action="/settings/password" class="row g-3">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <div class="col-md-6">
+            <label class="form-label" for="p-cur">Current password</label>
+            <input class="form-control" id="p-cur" name="current" type="password" autocomplete="current-password" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="p-new">New password</label>
+            <input class="form-control" id="p-new" name="new" type="password" autocomplete="new-password" minlength="12" required>
+            <div class="form-hint">At least 12 characters.</div>
+          </div>
+          <div class="col-12"><button class="btn">Change password</button></div>
+        </form>
+      {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div class="col-lg-5">
+    <section class="card" id="status">
+      <div class="card-header">
+        <div class="d-flex align-items-center gap-2">
+          {{ icon('pulse', 'i sf-card-icon') }}
+          <div><h2 class="card-title">System status</h2><p class="card-subtitle">Whether GitLab and the local model answer right now.</p></div>
+        </div>
+      </div>
+      <div class="card-body">
+        <dl class="health" id="health"><dt>GitLab</dt><dd>Checking…</dd><dt>Local model</dt><dd>Checking…</dd></dl>
+      </div>
+    </section>
   </div>
 </div>
-{% if saved %}<p class="notice" role="status">{{ saved }}</p>{% endif %}
-{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-
-<section class="panel" id="token">
-  <div class="panel-head">
-    <div>
-      <h2>GitLab connection</h2>
-      <p>The app reads findings and writes issues and merge requests with <em>your</em> token, so it can only do what your GitLab account can do on <a href="{{ gitlab_url }}">{{ gitlab_url }}</a>.</p>
-    </div>
-    {% if masked %}<span class="badge badge-on">Connected</span>{% else %}<span class="badge">Not connected</span>{% endif %}
-  </div>
-  {% set signed_in = masked and user.gitlab_refresh_enc %}
-  {% if signed_in %}
-    <p class="connected">Connected as <strong>{{ user.gitlab_username }}</strong> through <em>Sign in with GitLab</em>. Nothing to set up: the token is renewed automatically.</p>
-  {% elif masked %}
-    <p class="connected">Connected{% if user.gitlab_username %} as <strong>{{ user.gitlab_username }}</strong>{% endif %} with token <code>{{ masked }}</code> ({{ 'OAuth token' if user.gitlab_token_type == 'oauth' else 'access token' }}).</p>
-  {% elif gitlab_signin %}
-    <p class="warn">Not connected. Sign out and choose <em>Sign in with GitLab</em>, or add a token below.</p>
-  {% else %}
-    <p class="warn">No token saved yet. Add one to start analyzing commits.</p>
-  {% endif %}
-  {% if signed_in %}<details class="token-alt"><summary>Use an access token instead</summary>{% endif %}
-  <form method="post" action="/settings/token" class="stack narrow">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <fieldset class="choice">
-      <legend>Token type</legend>
-      <label><input type="radio" name="token_type" value="access_token" {% if user.gitlab_token_type != 'oauth' %}checked{% endif %}> Personal, project or group access token</label>
-      <label><input type="radio" name="token_type" value="oauth" {% if user.gitlab_token_type == 'oauth' %}checked{% endif %}> OAuth access token</label>
-    </fieldset>
-    <label>Token <input name="token" type="password" autocomplete="off" required placeholder="glpat-…"></label>
-    <p class="hint">Create it in GitLab under <em>User settings › Access tokens</em>. Scopes <code>read_api</code> and <code>read_repository</code> are enough to analyze commits. Use <code>api</code> instead to also post to issues, open fix merge requests and dismiss findings.</p>
-    <div class="form-actions">
-      <button class="primary">{{ 'Replace token' if masked else 'Save token' }}</button>
-    </div>
-  </form>
-  {% if signed_in %}</details>{% endif %}
-  {% if masked %}
-  <div class="panel-foot">
-    <form method="post" action="/settings/token/delete" data-confirm="Remove your GitLab token? You can't analyze commits until you add one again.">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button class="danger-link">{{ 'Disconnect GitLab' if signed_in else 'Remove token' }}</button>
-    </form>
-  </div>
-  {% endif %}
-</section>
-
-<section class="panel" id="status">
-  <div class="panel-head"><div><h2>System status</h2><p>Whether GitLab and the local model answer right now.</p></div></div>
-  <dl class="health" id="health"><dt>GitLab</dt><dd>Checking…</dd><dt>Local model</dt><dd>Checking…</dd></dl>
-</section>
-
-<section class="panel">
-  <div class="panel-head"><div><h2>Account</h2><p>Signed in as <strong>{{ user.username }}</strong>{% if user.email %} ({{ user.email }}){% endif %}.</p></div>
-    {% if user.is_windows %}<span class="badge badge-windows">Windows account</span>{% elif user.is_gitlab %}<span class="badge badge-gitlab">GitLab account</span>{% else %}<span class="badge">Local account</span>{% endif %}</div>
-  {% if user.is_gitlab %}
-    <p>You sign in with your GitLab account, so your password is managed in GitLab (or Windows, if GitLab uses it), not here.</p>
-  {% elif user.is_windows %}
-    <p>You sign in with your Windows account, so your password is managed in Windows, not here. To change or reset it, use Windows or ask your IT service desk.</p>
-  {% else %}
-  <form method="post" action="/settings/password" class="stack narrow">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
-    <label>New password <input name="new" type="password" autocomplete="new-password" minlength="12" required></label>
-    <p class="hint">At least 12 characters.</p>
-    <div class="form-actions"><button>Change password</button></div>
-  </form>
-  {% endif %}
-</section>
 {% endblock %}
 {% block scripts %}<script src="/static/settings.js"></script>{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% block title %}Local model · Admin · SecureFix{% endblock %}
+{% block content %}
+{{ ui.page_header('Local model (vLLM)', 'The model every user\'s new analyses use. An analysis that is already running keeps the settings it started with.', 'Administration') }}
+{{ ui.flash(saved, error) }}
+
+<form method="post" action="/admin/llm" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card-header">
+    <div>
+      <h2 class="card-title">Connection and limits</h2>
+      <p class="card-subtitle">{% if llm.overridden %}These values were changed here and override <code>.env</code>.{% else %}These values come from <code>.env</code>.{% endif %}</p>
+    </div>
+    <div class="card-actions"><span class="badge" id="llm-state">Checking…</span></div>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12">
+        <label class="form-label" for="f-base">Base URL</label>
+        <input class="form-control" id="f-base" name="base_url" value="{{ llm.base_url }}" required placeholder="http://vllm.internal:8000/v1">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-model">Model</label>
+        <input class="form-control" id="f-model" name="model" value="{{ llm.model }}" required list="llm-models" autocomplete="off">
+        <datalist id="llm-models"></datalist>
+        <div class="form-hint">Suggestions are the models the server reports.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-key">API key</label>
+        <input class="form-control" id="f-key" name="api_key" type="password" autocomplete="off" placeholder="{{ 'A key is saved; leave blank to keep it' if llm.has_key else 'None' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-timeout">Timeout per request (seconds)</label>
+        <input class="form-control" id="f-timeout" name="timeout_s" type="number" min="10" max="3600" value="{{ llm.timeout_s }}" required>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-parallel">Parallel requests</label>
+        <input class="form-control" id="f-parallel" name="parallel" type="number" min="1" max="32" value="{{ llm.parallel }}" required>
+        <div class="form-hint">Model requests one analysis sends at the same time; vLLM processes them together. 1 = one after another. Lower it if vLLM runs out of memory or requests time out. Total load = this × worker threads.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-max">Max tokens per reply</label>
+        <input class="form-control" id="f-max" name="max_tokens" type="number" min="1024" max="32768" value="{{ llm.max_tokens }}" required>
+        <div class="form-hint">Longest triage reply the model may write. A reply cut off at this limit is retried once with twice as many; raise it if findings fail with “cut off” or “wasn’t valid JSON”. Prompt plus reply must fit the model’s context length.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-budget">Code per finding (tokens)</label>
+        <input class="form-control" id="f-budget" name="context_budget" type="number" min="4000" max="1000000" step="1000" value="{{ llm.context_budget }}" required>
+        <div class="form-hint">Most code the model sees for one finding (the finding’s file, taint trace, called functions, callers, configuration). More is slower and can lower precision. Code, prompts and reply (with thinking) must fit vLLM’s <code>--max-model-len</code>. New analyses and <em>Run again</em> use it.</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="f-thinking">Thinking (default for new analyses)</label>
+        <select class="form-select" id="f-thinking" name="thinking">
+          <option value="on" {% if llm.thinking %}selected{% endif %}>On: the model reasons before answering (slower)</option>
+          <option value="off" {% if not llm.thinking %}selected{% endif %}>Off: the model answers directly (faster)</option>
+        </select>
+        <div class="form-hint">For reasoning models such as Qwen3. Users can still choose per analysis. Thinking uses part of <em>Max tokens per reply</em>, so raise that if replies get cut off with thinking on.</div>
+      </div>
+      <div class="col-md-6 d-flex flex-column justify-content-center">
+        <label class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="structured_output" value="1" {% if llm.structured_output %}checked{% endif %}>
+          <span class="form-check-label">Structured output (JSON schema)</span>
+          <span class="form-check-description">Turn off for older vLLM builds.</span>
+        </label>
+        {% if llm.has_key %}<label class="form-check">
+          <input class="form-check-input" type="checkbox" name="clear_key" value="1">
+          <span class="form-check-label">Remove the saved API key</span>
+        </label>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex align-items-center">
+    <button class="btn btn-primary">Save model settings</button>
+    {% if llm.overridden %}
+    <button class="btn btn-link link-danger ms-auto" form="llm-reset">Reset to the values in .env</button>
+    {% endif %}
+  </div>
+</form>
+{% if llm.overridden %}
+<form method="post" action="/admin/llm/reset" id="llm-reset" data-confirm="Go back to the vLLM settings in .env?">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/admin.js"></script>{% endblock %}

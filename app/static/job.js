@@ -19,7 +19,6 @@
   const VALIDATION = {
     passed: 'Fix applied, built, tested and re-scanned cleanly.',
     failed: 'Fix did not pass validation.',
-    not_configured: 'Fix not validated: no build, test or re-scan command is set for this project (Admin).',
   };
 
   function stamp(f) {
@@ -50,7 +49,7 @@
       const [label, cls] = VERDICT[v.verdict] || [v.verdict || 'Unknown', 'v-skip'];
       const ev = (v.evidence || []).length ? `<ul class="evidence">${v.evidence.map(e => `<li><code>${esc(e)}</code></li>`).join('')}</ul>` : '';
       return `<section class="run"><h4>Run ${i + 1} <span class="stamp ${cls}">${esc(label)}</span> <span class="muted">${pct(v.confidence) || ''}</span></h4>${
-        field('Source', v.source)}${field('Sink', v.sink)}${field('Mitigations', v.mitigations)}<div class="prose">${esc(v.reasoning || '')}</div>${ev}</section>`;
+        field('Source', v.source)}${field('Sink', v.sink)}${field('Mitigations', v.mitigations)}<div class="sf-prose">${esc(v.reasoning || '')}</div>${ev}</section>`;
     }).join('');
     return `<details class="runs"${f.verdict === 'needs_review' ? ' open' : ''}><summary>How the ${votes.length} runs saw it</summary><div class="run-grid">${cards}</div></details>`;
   }
@@ -80,7 +79,7 @@
       const cost = modelRan(f) ? ` · analyzed in ${secs(f.duration_s)}${f.completion_tokens ? ` · ${f.completion_tokens.toLocaleString()} tokens generated` : ''}` : '';
       parts.push(`<p class="meta">Confidence ${conf}${votes ? `; independent runs: ${esc(votes)}` : ''}${cost}</p>`);
     }
-    if (f.reasoning) parts.push(`<h3>Why</h3><div class="prose">${esc(f.reasoning)}</div>`);
+    if (f.reasoning) parts.push(`<h3>Why</h3><div class="sf-prose">${esc(f.reasoning)}</div>`);
     if ((f.evidence || []).length) parts.push(`<h3>Evidence</h3><ul class="evidence">${f.evidence.map(e => `<li><code>${esc(e)}</code></li>`).join('')}</ul>`);
     parts.push(runsHtml(f));
     if (f.status === 'done' && f.verdict === 'needs_review' && canAct) {
@@ -88,15 +87,15 @@
     }
     if (f.fix) {
       parts.push('<h3>Proposed fix</h3>');
-      if (f.validation_status) parts.push(`<p class="validation val-${f.validation_status}">${esc(VALIDATION[f.validation_status] || f.validation_status)}</p>`);
-      if (f.fix.explanation) parts.push(`<div class="prose">${esc(f.fix.explanation)}</div>`);
+      if (VALIDATION[f.validation_status]) parts.push(`<p class="validation val-${f.validation_status}">${esc(VALIDATION[f.validation_status] || f.validation_status)}</p>`);
+      if (f.fix.explanation) parts.push(`<div class="sf-prose">${esc(f.fix.explanation)}</div>`);
       if (f.diff) parts.push(`<pre class="diff" tabindex="0">${diffHtml(f.diff)}</pre>`);
       if (f.fix.suggested_test) parts.push(`<details><summary>Suggested test</summary><pre class="code">${esc(f.fix.suggested_test)}</pre></details>`);
-      if (f.validation_log) parts.push(`<details><summary>Validation output</summary><pre class="code">${esc(f.validation_log)}</pre></details>`);
+      if (f.validation_log && f.validation_status !== 'not_configured') parts.push(`<details><summary>Validation output</summary><pre class="code">${esc(f.validation_log)}</pre></details>`);
     }
     const flows = (f.code_flows || []).map(s => `<li><code>${esc(s.file)}:${s.line}</code> ${esc(s.kind || '')}</li>`).join('');
     if (flows) parts.push(`<details><summary>Scanner taint trace (${f.code_flows.length} steps)</summary><ol class="flow">${flows}</ol></details>`);
-    if (f.description) parts.push(`<details><summary>Scanner description</summary><div class="prose">${esc(f.description)}</div></details>`);
+    if (f.description) parts.push(`<details><summary>Scanner description</summary><div class="sf-prose">${esc(f.description)}</div></details>`);
     if ((f.context_files || []).length) {
       parts.push(`<details><summary>Code the model saw (${f.context_files.length} excerpts, ${f.context_tokens.toLocaleString()} tokens)</summary><ul class="ctx">${
         f.context_files.map(c => `<li><code>${esc(c.path)}:${c.start}-${c.end}</code> ${esc(c.reason)}</li>`).join('')}</ul></details>`);
@@ -113,14 +112,14 @@
       if (m) parts.push(`<p class="act-msg">${mrLine}</p>`);
     } else if (f.status === 'done') {
       const p = f.posted;
-      const btns = [p ? '<button data-act="note" class="done" disabled>Analysis posted ✓</button>'
-                      : '<button data-act="note">Post analysis to GitLab issue</button>'];
-      if (m) btns.push(`<button data-act="mr" class="done" disabled>Merge request${mrIid} opened ✓</button>`);
-      else if (f.fix && f.diff) btns.push('<button class="primary" data-act="mr">Open fix merge request</button>');
+      const btns = [p ? '<button data-act="note" class="btn done" disabled>Analysis posted ✓</button>'
+                      : '<button class="btn" data-act="note">Post analysis to GitLab issue</button>'];
+      if (m) btns.push(`<button data-act="mr" class="btn done" disabled>Merge request${mrIid} opened ✓</button>`);
+      else if (f.fix && f.diff) btns.push('<button class="btn btn-primary" data-act="mr">Open fix merge request</button>');
       if (f.verdict === 'needs_review') {
-        btns.push('<button class="primary" data-act="confirm">Confirm as real &amp; generate fix</button>');
-        btns.push(`<button class="danger" data-act="false-positive">${f.vulnerability_gid ? 'Mark as false positive &amp; dismiss in GitLab' : 'Mark as false positive'}</button>`);
-      } else if (f.vulnerability_gid && f.verdict !== 'true_positive') btns.push('<button class="danger" data-act="dismiss">Dismiss as false positive</button>');
+        btns.push('<button class="btn btn-primary" data-act="confirm">Confirm as real &amp; generate fix</button>');
+        btns.push(`<button class="btn btn-outline-danger" data-act="false-positive">${f.vulnerability_gid ? 'Mark as false positive &amp; dismiss in GitLab' : 'Mark as false positive'}</button>`);
+      } else if (f.vulnerability_gid && f.verdict !== 'true_positive') btns.push('<button class="btn btn-outline-danger" data-act="dismiss">Dismiss as false positive</button>');
       const posted = p ? `Already posted${p.issue_iid ? ` on issue #${esc(p.issue_iid)}` : ''}${
         p.copied_from_job ? ` from the earlier <a href="/jobs/${esc(p.copied_from_job)}">analysis #${esc(p.copied_from_job)}</a>` : ''} by ${esc(p.by)}, ${esc(when(p.at))}${
         p.url ? ` (<a href="${esc(p.url)}" target="_blank" rel="noopener">open comment</a>)` : ''}.` : '';

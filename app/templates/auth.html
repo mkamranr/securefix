@@ -2,19 +2,18 @@
 {% block title %}{{ 'Sign in' if mode == 'login' else 'Set up the administrator' }} · SecureFix{% endblock %}
 {% block body_class %}auth{% endblock %}
 {% block anon_content %}
-<div class="auth-shell">
+<div class="auth-shell card card-lg">
   <aside class="auth-aside">
-    <span class="brand">{{ icon('shield', 'brand-mark') }}<span class="brand-text"><b>SecureFix</b><small>AI-Powered SAST Analysis &amp; Fixes</small></span></span>
+    <span class="sf-brand"><img src="/static/logo.svg" width="44" height="44" alt=""><span class="sf-brand-text"><b>Secure<span>Fix</span></b><small>SAST triage &amp; fixes</small></span></span>
     <div>
       <h1>Triage SAST findings with confidence</h1>
       <p>Every GitLab SAST finding is checked against the real code by your local model.</p>
     </div>
     <ul>
       <li>{{ icon('check-circle') }}Separates real vulnerabilities from false positives, with the evidence</li>
-      <li>{{ icon('check-circle') }}Proposes fixes, validated with your build, tests and re-scan</li>
+      <li>{{ icon('check-circle') }}Proposes a fix for each real vulnerability</li>
       <li>{{ icon('check-circle') }}Posts results to GitLab issues and opens fix merge requests</li>
     </ul>
-    <div class="airgap">{{ icon('lock') }}<span><b>Air-Gapped Environment</b><small>No Internet Connectivity</small></span></div>
   </aside>
   <section class="auth-card">
     {% if mode == 'login' %}
@@ -24,19 +23,25 @@
       <h2>Set up the administrator</h2>
       <p class="lede">No accounts exist yet. This first account becomes the administrator; after that, administrators add accounts or turn on Windows sign-in.</p>
     {% endif %}
-    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
     {% if mode == 'login' and gitlab_signin %}
-    <a class="button primary full gitlab-signin" href="/login/gitlab">{{ icon('gitlab') }} Sign in with GitLab</a>
-    <p class="divider"><span>{% if windows %}or with your Windows or local account{% else %}or with a local account{% endif %}</span></p>
+    <a class="btn btn-primary w-100 gitlab-signin" href="/login/gitlab">{{ icon('gitlab', 'i me-2') }}Sign in with GitLab</a>
+    <div class="hr-text">{% if windows %}or with your Windows or local account{% else %}or with a local account{% endif %}</div>
     {% endif %}
-    <form method="post" action="{{ '/login' if mode == 'login' else '/register' }}" class="stack">
+    <form method="post" action="{{ '/login' if mode == 'login' else '/register' }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>Username <input name="username" autocomplete="username" required autofocus value="{{ username or '' }}" autocapitalize="none" spellcheck="false"></label>
-      <label>Password <input name="password" type="password" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" required {% if mode != 'login' %}minlength="12"{% endif %}>
-        {% if mode != 'login' %}<span class="hint">At least 12 characters.</span>{% endif %}</label>
-      <button class="{{ '' if gitlab_signin else 'primary ' }}full">{{ 'Sign in' if mode == 'login' else 'Create administrator' }}</button>
+      <div class="mb-3">
+        <label class="form-label" for="a-user">Username</label>
+        <input class="form-control" id="a-user" name="username" autocomplete="username" required autofocus value="{{ username or '' }}" autocapitalize="none" spellcheck="false">
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="a-pass">Password</label>
+        <input class="form-control" id="a-pass" name="password" type="password" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" required {% if mode != 'login' %}minlength="12"{% endif %}>
+        {% if mode != 'login' %}<div class="form-hint">At least 12 characters.</div>{% endif %}
+      </div>
+      <button class="btn {{ '' if gitlab_signin else 'btn-primary ' }}w-100">{{ 'Sign in' if mode == 'login' else 'Create administrator' }}</button>
     </form>
-    {% if mode == 'login' %}<p class="hint auth-foot">No account or forgot your password? Ask an administrator.{% if windows %} Windows passwords are managed in Windows.{% endif %}</p>{% endif %}
+    {% if mode == 'login' %}<p class="text-secondary small auth-foot">No account or forgot your password? Ask an administrator.{% if windows %} Windows passwords are managed in Windows.{% endif %}</p>{% endif %}
   </section>
 </div>
 {% endblock %}

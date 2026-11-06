@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% block title %}Users · Admin · SecureFix{% endblock %}
+{% block content %}
+{{ ui.page_header('Users', 'GitLab and Windows users appear here after their first sign-in. Local accounts are for people who can use neither.', 'Administration') }}
+{{ ui.flash(saved, error) }}
+
+<div class="card">
+  <div class="card-header"><h2 class="card-title">People</h2><div class="card-actions"><span class="badge">{{ users | length }}</span></div></div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>User</th><th>Sign-in</th><th>Role</th><th>GitLab account</th><th>Last sign-in</th><th class="w-1"><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <span class="avatar avatar-sm sf-avatar">{{ u.initials }}</span>
+              <div><strong>{{ u.username }}</strong>{% if u.display_name %}<div class="text-secondary small">{{ u.display_name }}</div>{% endif %}</div>
+            </div>
+          </td>
+          <td>{{ ui.account_badge(u, true) }}{% if u.gitlab_user_id and not u.is_gitlab %} <span class="badge badge-gitlab" title="Also signs in with GitLab">GitLab</span>{% endif %}</td>
+          <td>{% if u.is_admin %}<span class="badge badge-admin">Administrator</span>{% else %}User{% endif %}</td>
+          <td>{{ u.gitlab_username or '—' }}</td>
+          <td class="text-secondary">{{ (u.last_login_at | ago) or '—' }}</td>
+          <td class="text-nowrap">{% if u.id != user.id %}
+            <div class="d-flex gap-1 justify-content-end">
+              <form method="post" action="/admin/users/{{ u.id }}/toggle-admin"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button></form>
+              <form method="post" action="/admin/users/{{ u.id }}/delete" data-confirm="Delete {{ u.username }}? Their GitLab token is erased; their analyses stay in the history."><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sm btn-ghost-danger">Delete</button></form>
+            </div>
+          {% else %}<span class="text-secondary">You</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer text-secondary small">
+    {% if ldap.admin_group %}<p class="mb-1">An admin group is set for Windows sign-in, so a Windows user's role is reset from that group at each sign-in.</p>{% endif %}
+    <p class="mb-0">Deleting a GitLab or Windows user removes their profile; if GitLab or the directory still allows them, a new profile is created when they sign in again. Block them in GitLab, or use the allowed group, to keep them out.</p>
+  </div>
+</div>
+
+<form method="post" action="/admin/users" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="card-header"><h2 class="card-title">Add a local account</h2></div>
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label" for="u-name">Username</label>
+        <input class="form-control" id="u-name" name="username" pattern="[a-z0-9._\-]{3,80}" required autocapitalize="none">
+      </div>
+      <div class="col-md-5">
+        <label class="form-label" for="u-pass">Temporary password</label>
+        <input class="form-control" id="u-pass" name="password" type="password" minlength="12" required autocomplete="new-password">
+      </div>
+      <div class="col-md-2"><button class="btn btn-primary w-100">Add account</button></div>
+    </div>
+  </div>
+</form>
+{% endblock %}

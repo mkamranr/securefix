@@ -1,0 +1,27 @@
+{# Page building blocks shared by the templates. Import with: {% import "macros.html" as ui %} #}
+
+{% macro page_header(title, lede='', pretitle='') %}
+<div class="page-header d-print-none sf-page-header">
+  <div class="row g-3 align-items-center">
+    <div class="col">
+      {% if pretitle %}<div class="page-pretitle">{{ pretitle }}</div>{% endif %}
+      <h1 class="page-title">{{ title }}</h1>
+      {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
+    </div>
+    {% if caller %}<div class="col-auto ms-auto d-print-none">{{ caller() }}</div>{% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro flash(saved='', error='') %}
+{% if saved %}<div class="alert alert-success alert-dismissible" role="status">
+  <div class="d-flex gap-2">{{ icon('check-circle', 'i alert-icon') }}<div>{{ saved }}</div></div>
+  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>{% endif %}
+{% if error %}<div class="alert alert-danger alert-dismissible" role="alert">
+  <div class="d-flex gap-2">{{ icon('alert-triangle', 'i alert-icon') }}<div>{{ error }}</div></div>
+  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>{% endif %}
+{% endmacro %}
+
+{% macro onoff(on) %}{% if on %}<span class="badge badge-on">On</span>{% else %}<span class="badge">Off</span>{% endif %}{% endmacro %}
+
+{% macro account_badge(u, short=false) %}{% if u.is_windows %}<span class="badge badge-windows">Windows{{ '' if short else ' account' }}</span>{% elif u.is_gitlab %}<span class="badge badge-gitlab">GitLab{{ '' if short else ' account' }}</span>{% else %}<span class="badge">Local{{ '' if short else ' account' }}</span>{% endif %}{% endmacro %}

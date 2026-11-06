@@ -12,11 +12,17 @@ There is no self-registration after that.
 Windows users get a profile on their first sign-in. Their password stays in Active Directory, so it can't be
 changed or reset in the app. They can sign in as `jdoe`, `CORP\jdoe` or `jdoe@corp.example.com`.
 
+The left menu has **Home**, **Analyze commit** and **History**; administrators also get an **Administration** group
+(Local model, GitLab sign-in, Windows sign-in, Users). **Settings** holds your GitLab connection, the system status
+and your password. The monitor/sun/moon button at the top switches between the **System**, **Light** and **Dark**
+theme; the choice is remembered in your browser.
+
 ## 2. Connect GitLab (Settings)
 *Not needed if you signed in with GitLab: Settings shows "Connected through Sign in with GitLab".*
 
-Save a GitLab token: a personal, project or group access token, or an OAuth token. It is checked against GitLab,
-then stored encrypted, and it is never shown again.
+When GitLab sign-in is turned on, Settings has no token form: if you're not connected, sign out and choose
+**Sign in with GitLab**. Otherwise save a GitLab token: a personal, project or group access token, or an OAuth
+token. It is checked against GitLab, then stored encrypted, and it is never shown again.
 
 | Token scopes | Lets you |
 | --- | --- |
@@ -27,7 +33,7 @@ You need at least the **Developer** role on a project to see its vulnerabilities
 **Reporter**, and linking an issue to a vulnerability needs **Developer**.
 
 ## 3. Analyze a commit
-On **Analyze Commit**, pick a project, a branch and a commit. Each commit shows whether its SAST scan has finished,
+On **Analyze commit**, pick a project, a branch and a commit. Each commit shows whether its SAST scan has finished,
 how many findings it has, and whether it was already analyzed. Only scanned commits can be analyzed.
 
 Choose the **severities to analyze**. Critical and High are checked by default. Findings of other severities are
@@ -37,7 +43,7 @@ Choose whether the model **thinks** before it answers. With thinking **on** (the
 reasoning model such as Qwen3 works through the code step by step first: this is slower and generates more tokens,
 but is often more careful. With thinking **off** it answers directly and faster. The browser remembers this choice too.
 
-**Start Analysis** queues the job. The page follows its progress live, and you can **Cancel** it.
+**Start analysis** queues the job. The page follows its progress live, and you can **Cancel** it.
 
 ## 4. Review the results
 The list shows each finding's severity, verdict, **confidence**, location, the **time** its analysis took ("Copied"
@@ -92,7 +98,7 @@ confidence in the list, the *avg time per finding* tile, and the time and tokens
 each analysis's thinking setting, and the Excel report has *Model thinking* and *Analysis time* on the Summary sheet and
 *Analysis time (s)* and *Tokens generated* per finding.
 
-To compare **code budgets**, an administrator changes *Code per finding* on the Admin page and then chooses
+To compare **code budgets**, an administrator changes *Code per finding* under **Administration › Local model** and then chooses
 **Run again**: the new analysis uses the new budget and asks the model again. Findings whose code already fit the
 old budget get exactly the same prompt, so their earlier result is reused. The header, History and the Excel
 report show each analysis's budget.

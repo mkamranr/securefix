@@ -823,7 +823,7 @@ def test_shared_analysis_is_read_only(client, fake_services):
 
     with TestClient(app) as dave:
         dave.post("/login", data={"username": "dave", "password": "dave's long password", "csrf": csrf(dave, "/login")})
-        assert "Add your GitLab token" in dave.get("/history?scope=shared").text
+        assert "Connect GitLab" in dave.get("/history?scope=shared").text
         dave.post("/settings/token", data={"token": fake_services.BOB_TOKEN, "token_type": "access_token",
                                            "csrf": csrf(dave, "/settings")})
         dh = {"X-CSRF-Token": csrf(dave, "/")}
@@ -1003,8 +1003,8 @@ def test_gitlab_signin_setup(client, fake_services):
     anon = TestClient(app)
     assert "Sign in with GitLab" not in anon.get("/login").text
     assert anon.get("/login/gitlab", follow_redirects=False).status_code == 404
-    token = csrf(client, "/admin")
-    page = client.get("/admin").text
+    token = csrf(client, "/admin/gitlab")
+    page = client.get("/admin/gitlab").text
     assert "GitLab sign-in" in page and "http://testserver/login/gitlab/callback" in page
     r = client.post("/admin/gitlab-signin", data={"enabled": "1", "app_id": "app-id-123", "csrf": token})
     assert "Enter the Application ID and secret" in r.text

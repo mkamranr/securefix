@@ -115,8 +115,8 @@ def back_to_settings(saved: str = "", error: str = "") -> RedirectResponse:
 
 
 def back_to_admin(section: str, saved: str = "", error: str = "") -> RedirectResponse:
-    q = urlencode({k: v for k, v in (("saved", saved), ("error", error), ("section", section)) if v})
-    return RedirectResponse(f"/admin?{q}#{section}", status_code=303)
+    q = urlencode({k: v for k, v in (("saved", saved), ("error", error)) if v})
+    return RedirectResponse(f"/admin/{section}" + (f"?{q}" if q else ""), status_code=303)
 
 
 def render(request: Request, name: str, user: User | None, **ctx):
@@ -356,21 +356,35 @@ def change_password(request: Request, current: str = Form(...), new: str = Form(
 
 
 # ------------------------------------------------------------------ admin
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page(request: Request, user: User = Depends(admin_user), db: Session = Depends(get_db),
-               saved: str = "", error: str = "", section: str = ""):
-    users = db.scalars(select(User).where(User.password_hash != "disabled").order_by(User.username)).all()
-    configs = db.scalars(select(ProjectConfig).order_by(ProjectConfig.gitlab_project_id)).all()
-    cfg = llm_config(db)  # secrets never go to the page, only whether one is saved
-    llm = {**cfg, "api_key": None, "has_key": bool(cfg["api_key"]) and cfg["api_key"] != "EMPTY",
-           "overridden": bool(llm_overrides(db))}
-    ldap = ldap_auth.ldap_config(db)
-    ldap = {**ldap, "has_bind_password": bool(ldap["bind_password"]), "bind_password": None}
-    oauth = gitlab_oauth.oauth_config(db)
-    oauth = {**oauth, "has_secret": bool(oauth["secret"]), "secret": None, "ready": gitlab_oauth.is_enabled(db),
-             "callback": gitlab_oauth.redirect_uri(oauth, str(request.base_url))}
-    return render(request, "admin.html", user, users=users, configs=configs, llm=llm, ldap=ldap, oauth=oauth,
-                  saved=saved, error=error, section=section)
+ADMIN_SECTIONS = ("model", "gitlab", "windows", "users")
+
+
+@app.get("/admin")
+def admin_home(user: User = Depends(admin_user)):
+    return RedirectResponse("/admin/model", status_code=303)
+
+
+@app.get("/admin/{section}", response_class=HTMLResponse)
+def admin_page(section: str, request: Request, user: User = Depends(admin_user), db: Session = Depends(get_db),
+               saved: str = "", error: str = ""):
+    if section not in ADMIN_SECTIONS:
+        raise HTTPException(404, "No such admin page.")
+    ctx = {}
+    if section == "model":
+        cfg = llm_config(db)  # secrets never go to the page, only whether one is saved
+        ctx["llm"] = {**cfg, "api_key": None, "has_key": bool(cfg["api_key"]) and cfg["api_key"] != "EMPTY",
+                      "overridden": bool(llm_overrides(db))}
+    elif section == "gitlab":
+        oauth = gitlab_oauth.oauth_config(db)
+        ctx["oauth"] = {**oauth, "has_secret": bool(oauth["secret"]), "secret": None,
+                        "ready": gitlab_oauth.is_enabled(db),
+                        "callback": gitlab_oauth.redirect_uri(oauth, str(request.base_url))}
+    else:  # the users page notes when the Windows admin group sets roles
+        ldap = ldap_auth.ldap_config(db)
+        ctx["ldap"] = {**ldap, "has_bind_password": bool(ldap["bind_password"]), "bind_password": None}
+        if section == "users":
+            ctx["users"] = db.scalars(select(User).where(User.password_hash != "disabled").order_by(User.username)).all()
+    return render(request, f"admin/{section}.html", user, section=section, saved=saved, error=error, **ctx)
 
 
 @app.post("/admin/llm")
@@ -540,7 +554,8 @@ def save_project_config(request: Request, project_id: int = Form(...), build_cmd
         db.add(cfg)
     cfg.build_cmd, cfg.test_cmd, cfg.rescan_cmd, cfg.updated_by = build_cmd, test_cmd, rescan_cmd, user.id
     db.commit()
-    return back_to_admin("validation", saved=f"Saved the validation commands for project {project_id}.")
+    # No page sets these any more (the section was removed); commands saved earlier still validate fixes.
+    return back_to_admin("model", saved=f"Saved the validation commands for project {project_id}.")
 
 
 # ------------------------------------------------------------------ pages
@@ -554,7 +569,8 @@ def home_page(request: Request, user: User = Depends(current_user), db: Session 
              "fp": verdicts.get("false_positive", 0)}
     recent = db.scalars(select(AnalysisJob).where(mine).order_by(AnalysisJob.id.desc()).limit(8)).all()
     active = db.scalar(select(func.count(AnalysisJob.id)).where(AnalysisJob.status.in_(["queued", "running"]))) or 0
-    return render(request, "home.html", user, stats=stats, recent=recent, active=active)
+    return render(request, "home.html", user, stats=stats, recent=recent, active=active,
+                  gitlab_signin=gitlab_oauth.is_enabled(db))
 
 
 @app.get("/analyze", response_class=HTMLResponse)

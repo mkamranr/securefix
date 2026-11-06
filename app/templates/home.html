@@ -1,55 +1,74 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Home · SecureFix{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <h1>Welcome, {{ user.display_name or user.username }}</h1>
-    <p class="lede">Your analyses at a glance. {% if active %}{{ active }} analysis job{{ 's' if active != 1 }} queued or running on the server.{% endif %}</p>
-  </div>
-  <a class="button primary" href="/analyze">{{ icon('play') }} Analyze a commit</a>
+{% call ui.page_header('Welcome, ' ~ (user.display_name or user.username), 'Your analyses at a glance.' ~ ((' %d analysis job%s queued or running on the server.' % (active, '' if active == 1 else 's')) if active else ''), 'Overview') %}
+  <a class="btn btn-primary" href="/analyze">{{ icon('play', 'i me-2') }}Analyze a commit</a>
+{% endcall %}
+{% if not user.gitlab_token_enc %}
+<div class="alert alert-warning" role="alert">
+  <div class="d-flex gap-2">{{ icon('alert-triangle', 'i alert-icon') }}<div>
+  {% if gitlab_signin %}Your GitLab account isn't connected. Sign out and choose <em>Sign in with GitLab</em> to start analyzing commits.
+  {% else %}Connect GitLab in <a href="/settings#gitlab">Settings</a> to start analyzing commits.{% endif %}
+  </div></div>
 </div>
-{% if not user.gitlab_token_enc %}<p class="warn">Add your GitLab token in <a href="/settings#token">Settings</a> to start analyzing commits.</p>{% endif %}
+{% endif %}
 
-<div class="stats">
-  <div class="stat s-jobs">{{ icon('history') }}<div><b>{{ stats.jobs }}</b><span>Analyses run</span></div></div>
-  <div class="stat s-real">{{ icon('bug') }}<div><b>{{ stats.real }}</b><span>Real vulnerabilities</span></div></div>
-  <div class="stat s-review">{{ icon('flag') }}<div><b>{{ stats.review }}</b><span>Need human review</span></div></div>
-  <div class="stat s-fp">{{ icon('check-circle') }}<div><b>{{ stats.fp }}</b><span>False positives</span></div></div>
-</div>
-
-<div class="home-grid">
-  <section class="card">
-    <div class="card-head">{{ icon('history') }}<div><h2>Recent analyses</h2><p>The last analyses you started.</p></div></div>
-    {% if recent %}
-    <div class="table-wrap">
-      <table class="grid">
-        <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead>
-        <tbody>
-        {% for j in recent %}
-          <tr>
-            <td><a href="/jobs/{{ j.id }}"><strong>#{{ j.id }}</strong></a></td>
-            <td>{{ j.project_path }}</td>
-            <td>{{ j.branch }}</td>
-            <td><code>{{ j.sha[:8] }}</code></td>
-            <td><span class="state state-{{ j.status }}">{{ j.status | capitalize }}</span></td>
-            <td>{{ j.created_at | ago }}</td>
-            <td>{% if j.finished_at %}{{ j.finished_at | ago }}{% else %}<span class="muted">—</span>{% endif %}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+<div class="row row-cards mb-3">
+  {% for cls, ico, n, label in [('s-jobs', 'history', stats.jobs, 'Analyses run'), ('s-real', 'bug', stats.real, 'Real vulnerabilities'),
+                                ('s-review', 'flag', stats.review, 'Need human review'), ('s-fp', 'check-circle', stats.fp, 'False positives')] %}
+  <div class="col-sm-6 col-xl-3">
+    <div class="card card-sm stat {{ cls }}">
+      <div class="card-body d-flex align-items-center gap-3">
+        <span class="stat-icon">{{ icon(ico) }}</span>
+        <div><b>{{ n }}</b><span>{{ label }}</span></div>
+      </div>
     </div>
-    <p class="hint"><a href="/history">See the full history</a></p>
-    {% else %}
-    <p class="empty">No analyses yet. <a href="/analyze">Pick a commit to analyze</a>.</p>
-    {% endif %}
-  </section>
+  </div>
+  {% endfor %}
+</div>
 
-  <section class="card">
-    <div class="card-head">{{ icon('pulse') }}<div><h2>System status</h2><p>Whether GitLab and the local model answer.</p></div></div>
-    <dl class="health" id="health"><dt>GitLab</dt><dd>Checking…</dd><dt>Local model</dt><dd>Checking…</dd></dl>
-    <p class="hint">How it works: pick a commit, the model checks each SAST finding against the code, then you review the verdicts and post them to GitLab issues or open fix merge requests.</p>
-  </section>
+<div class="row row-cards">
+  <div class="col-xl-8">
+    <section class="card">
+      <div class="card-header">
+        <div><h2 class="card-title">Recent analyses</h2><p class="card-subtitle">The last analyses you started.</p></div>
+        <div class="card-actions"><a href="/history" class="btn btn-sm">See all {{ icon('arrow-right', 'i ms-1') }}</a></div>
+      </div>
+      {% if recent %}
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table">
+          <thead><tr><th>#</th><th>Project</th><th>Branch</th><th>Commit</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead>
+          <tbody>
+          {% for j in recent %}
+            <tr>
+              <td><a href="/jobs/{{ j.id }}"><strong>#{{ j.id }}</strong></a></td>
+              <td>{{ j.project_path }}</td>
+              <td>{{ j.branch }}</td>
+              <td><code>{{ j.sha[:8] }}</code></td>
+              <td><span class="state state-{{ j.status }}">{{ j.status | capitalize }}</span></td>
+              <td class="text-secondary">{{ j.created_at | ago }}</td>
+              <td class="text-secondary">{% if j.finished_at %}{{ j.finished_at | ago }}{% else %}—{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body"><p class="empty">No analyses yet. <a href="/analyze">Pick a commit to analyze</a>.</p></div>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="col-xl-4">
+    <section class="card">
+      <div class="card-header"><div><h2 class="card-title">System status</h2><p class="card-subtitle">Whether GitLab and the local model answer.</p></div></div>
+      <div class="card-body">
+        <dl class="health" id="health"><dt>GitLab</dt><dd>Checking…</dd><dt>Local model</dt><dd>Checking…</dd></dl>
+      </div>
+      <div class="card-footer text-secondary small">How it works: pick a commit, the model checks each SAST finding against the code, then you review the verdicts and post them to GitLab issues or open fix merge requests.</div>
+    </section>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}<script src="/static/settings.js"></script>{% endblock %}

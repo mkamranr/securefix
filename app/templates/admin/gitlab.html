@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% block title %}GitLab sign-in · Admin · SecureFix{% endblock %}
+{% block content %}
+{{ ui.page_header('GitLab sign-in', 'Lets people sign in with their GitLab account. The app gets their GitLab token from the sign-in and renews it automatically, so they don\'t create or paste one.', 'Administration') }}
+{{ ui.flash(saved, error) }}
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header"><h2 class="card-title">Register the app in GitLab</h2></div>
+      <div class="card-body">
+        <ol class="sf-steps">
+          <li>In GitLab, open <a href="{{ gitlab_url }}/admin/applications/new">Admin › Applications › New application</a> (as a GitLab administrator).</li>
+          <li>Name it <em>SecureFix</em>, and set the redirect URI to <code class="copy" id="oauth-callback">{{ oauth.callback }}</code>.</li>
+          <li>Tick <em>Trusted</em> (no extra consent screen) and <em>Confidential</em>, and the scopes <code>api</code> and <code>read_repository</code>.</li>
+          <li>Save, then copy the Application ID and secret into this form.</li>
+        </ol>
+        <p class="text-secondary small mb-0">A profile is created on each person's first sign-in; a Windows profile with the same username is reused.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <form method="post" action="/admin/gitlab-signin" class="card h-100">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="card-header">
+        <h2 class="card-title">Settings</h2>
+        <div class="card-actions">{% if oauth.ready %}<span class="badge badge-on">On</span>{% else %}<span class="badge">Off</span>{% endif %}</div>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="enabled" value="1" {% if oauth.enabled %}checked{% endif %}>
+              <span class="form-check-label">Allow GitLab sign-in</span>
+            </label>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="g-id">Application ID</label>
+            <input class="form-control" id="g-id" name="app_id" value="{{ oauth.app_id }}" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="g-secret">Secret</label>
+            <input class="form-control" id="g-secret" name="secret" type="password" autocomplete="new-password" placeholder="{{ 'A secret is saved; leave blank to keep it' if oauth.has_secret else '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="g-url">App address (optional)</label>
+            <input class="form-control" id="g-url" name="app_url" value="{{ oauth.app_url }}" placeholder="https://securefix.internal">
+            <div class="form-hint">How users open this app. Only needed when the redirect URI isn't the address users use (for example behind a proxy).</div>
+          </div>
+        </div>
+      </div>
+      <div class="card-footer"><button class="btn btn-primary">Save GitLab sign-in settings</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

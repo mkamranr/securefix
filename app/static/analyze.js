@@ -10,7 +10,7 @@
 
   // ---------------------------------------------------------------- steps
   function setStep(n) {
-    document.querySelectorAll('#steps .step').forEach(s => {
+    document.querySelectorAll('#steps .sf-step').forEach(s => {
       const k = Number(s.dataset.step);
       s.classList.toggle('done', k < n);
       s.classList.toggle('current', k === n);

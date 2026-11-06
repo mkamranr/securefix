@@ -1,35 +1,40 @@
 {% extends "base.html" %}
-{% block title %}Analyze Commit · SecureFix{% endblock %}
+{% import "macros.html" as ui %}
+{% block title %}Analyze commit · SecureFix{% endblock %}
+{% block container_class %}container-fluid{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <h1>Analyze Commit</h1>
-    <p class="lede">Select a GitLab project, branch and commit to analyze its SAST report with AI.</p>
-  </div>
-</div>
+{{ ui.page_header('Analyze commit', 'Select a GitLab project, branch and commit to analyze its SAST report with AI.') }}
 
-<div class="steps" id="steps" aria-label="Progress">
-  <div class="step current" data-step="1"><span class="step-n">1</span><span>Select Project</span>{{ icon('gitlab') }}</div>
-  <div class="step-line"></div>
-  <div class="step" data-step="2"><span class="step-n">2</span><span>Select Branch</span>{{ icon('branch') }}</div>
-  <div class="step-line"></div>
-  <div class="step" data-step="3"><span class="step-n">3</span><span>Select Commit</span>{{ icon('commit') }}</div>
-  <div class="step-line"></div>
-  <div class="step" data-step="4"><span class="step-n">4</span>{{ icon('brain') }}<span>Analyze</span></div>
-  <div class="step-line"></div>
-  <div class="step" data-step="5"><span class="step-n">5</span>{{ icon('check-circle') }}<span>Review &amp; Take Action</span></div>
+<div class="card mb-3">
+  <div class="sf-wizard" id="steps" aria-label="Progress">
+    <div class="sf-step current" data-step="1"><span class="sf-step-n">1</span><span>Project</span></div>
+    <div class="sf-step-line"></div>
+    <div class="sf-step" data-step="2"><span class="sf-step-n">2</span><span>Branch</span></div>
+    <div class="sf-step-line"></div>
+    <div class="sf-step" data-step="3"><span class="sf-step-n">3</span><span>Commit</span></div>
+    <div class="sf-step-line"></div>
+    <div class="sf-step" data-step="4"><span class="sf-step-n">4</span><span>Analyze</span></div>
+    <div class="sf-step-line"></div>
+    <div class="sf-step" data-step="5"><span class="sf-step-n">5</span><span>Review &amp; act</span></div>
+  </div>
 </div>
 
 <div class="analyze-grid">
   <div class="analyze-left">
     <section class="card" aria-labelledby="p-h">
-      <div class="card-head">{{ icon('gitlab', 'card-icon') }}<div><h2 id="p-h">1. Select Project</h2><p>Choose a project from your GitLab instance.</p></div></div>
-      <div class="subcard">
-        <label for="project-input">GitLab Project</label>
+      <div class="card-header">
+        <div class="d-flex align-items-center gap-2">{{ icon('gitlab', 'i sf-card-icon') }}
+          <div><h2 class="card-title" id="p-h">Project</h2><p class="card-subtitle">Choose a project from your GitLab instance.</p></div></div>
+      </div>
+      <div class="card-body">
+        <label class="form-label" for="project-input">GitLab project</label>
         <div class="input-row project-pick">
-          <input id="project-input" type="search" placeholder="Search projects…" autocomplete="off" role="combobox"
-                 aria-expanded="false" aria-controls="projects" aria-autocomplete="list">
-          <a class="button icon-btn" id="project-link" href="#" target="_blank" rel="noopener" title="Open in GitLab" aria-label="Open the project in GitLab" hidden>{{ icon('external') }}</a>
+          <div class="input-icon flex-fill">
+            <span class="input-icon-addon">{{ icon('search') }}</span>
+            <input class="form-control" id="project-input" type="search" placeholder="Search projects…" autocomplete="off" role="combobox"
+                   aria-expanded="false" aria-controls="projects" aria-autocomplete="list">
+          </div>
+          <a class="btn btn-icon" id="project-link" href="#" target="_blank" rel="noopener" title="Open in GitLab" aria-label="Open the project in GitLab" hidden>{{ icon('external') }}</a>
           <ul id="projects" class="combo-list" role="listbox" aria-label="Projects" hidden></ul>
         </div>
         <div class="subcard project-info" id="project-info" hidden>
@@ -40,32 +45,43 @@
     </section>
 
     <section class="card" aria-labelledby="b-h">
-      <div class="card-head">{{ icon('branch', 'card-icon') }}<div><h2 id="b-h">2. Select Branch</h2><p>Choose a branch to view its commits.</p></div></div>
-      <div class="subcard">
-        <label for="branch">Branch</label>
+      <div class="card-header">
+        <div class="d-flex align-items-center gap-2">{{ icon('branch', 'i sf-card-icon') }}
+          <div><h2 class="card-title" id="b-h">Branch</h2><p class="card-subtitle">Choose a branch to view its commits.</p></div></div>
+      </div>
+      <div class="card-body">
+        <label class="form-label" for="branch">Branch</label>
         <div class="input-row">
-          <select id="branch" disabled><option>Pick a project first</option></select>
-          <button class="icon-btn" id="branch-refresh" title="Reload branches" aria-label="Reload branches" disabled>{{ icon('refresh') }}</button>
+          <select class="form-select" id="branch" disabled><option>Pick a project first</option></select>
+          <button class="btn btn-icon" id="branch-refresh" title="Reload branches" aria-label="Reload branches" disabled>{{ icon('refresh') }}</button>
         </div>
       </div>
     </section>
   </div>
 
   <section class="card" aria-labelledby="c-h">
-    <div class="card-head">{{ icon('commit', 'card-icon') }}<div><h2 id="c-h">3. Select Commit</h2><p>Select a commit from the branch. Only commits whose SAST scan has finished can be analyzed.</p></div></div>
-    <div class="search">{{ icon('search') }}<input type="search" id="commit-search" placeholder="Search commits…" aria-label="Search commits on this page" disabled></div>
-    <div class="table-wrap" id="commit-wrap">
-      <table class="grid commit-table">
-        <thead><tr><th><span class="visually-hidden">Select</span></th><th>Commit</th><th>Message</th><th>Author</th><th>Date</th><th>SAST Report</th></tr></thead>
+    <div class="card-header">
+      <div class="d-flex align-items-center gap-2">{{ icon('commit', 'i sf-card-icon') }}
+        <div><h2 class="card-title" id="c-h">Commit</h2><p class="card-subtitle">Only commits whose SAST scan has finished can be analyzed.</p></div></div>
+      <div class="card-actions">
+        <div class="input-icon">
+          <span class="input-icon-addon">{{ icon('search') }}</span>
+          <input class="form-control" type="search" id="commit-search" placeholder="Search commits…" aria-label="Search commits on this page" disabled>
+        </div>
+      </div>
+    </div>
+    <div class="table-responsive" id="commit-wrap">
+      <table class="table table-vcenter card-table commit-table">
+        <thead><tr><th><span class="visually-hidden">Select</span></th><th>Commit</th><th>Message</th><th>Author</th><th>Date</th><th>SAST report</th></tr></thead>
         <tbody id="commits"><tr><td colspan="6" class="empty">Pick a project and a branch.</td></tr></tbody>
       </table>
     </div>
-    <div class="pager">
+    <div class="card-footer pager">
       <span id="pager-text"></span>
       <span class="pager-btns">
-        <button id="prev-page" aria-label="Newer commits" disabled>{{ icon('chevron-left') }}</button>
+        <button class="btn btn-icon btn-sm" id="prev-page" aria-label="Newer commits" disabled>{{ icon('chevron-left') }}</button>
         <span class="page-n" id="page-n">1</span>
-        <button id="next-page" aria-label="Older commits" disabled>{{ icon('chevron-right') }}</button>
+        <button class="btn btn-icon btn-sm" id="next-page" aria-label="Older commits" disabled>{{ icon('chevron-right') }}</button>
       </span>
     </div>
   </section>
@@ -73,9 +89,9 @@
 
 <section class="card details-grid" id="details" aria-live="polite">
   <section>
-    <div class="card-head">{{ icon('key', 'card-icon') }}<div><h2>Commit Details <span class="badge badge-selected" id="d-selected" hidden>Selected</span></h2></div></div>
+    <h2 class="card-title mb-3">Commit details <span class="badge badge-selected" id="d-selected" hidden>Selected</span></h2>
     <dl class="kv" id="d-kv">
-      <dt>Commit Hash</dt><dd id="d-sha">—</dd>
+      <dt>Commit hash</dt><dd id="d-sha">—</dd>
       <dt>Message</dt><dd id="d-msg">—</dd>
       <dt>Author</dt><dd id="d-author">—</dd>
       <dt>Date</dt><dd id="d-date">—</dd>
@@ -86,7 +102,7 @@
   <section>
     <div class="status-line status-none" id="s-line">
       <span id="s-icon">{{ icon('minus-circle', 'big-i') }}</span>
-      <div><b>SAST Report Status</b><span class="status-title" id="s-title">No commit selected</span><span class="hint" id="s-sub">Pick a commit to see its scan.</span></div>
+      <div><b>SAST report status</b><span class="status-title" id="s-title">No commit selected</span><span class="hint" id="s-sub">Pick a commit to see its scan.</span></div>
     </div>
     <div class="counts" id="s-counts">
       <div><span>Findings (total)</span><b id="n-total">–</b></div>
@@ -97,7 +113,7 @@
     </div>
   </section>
   <section class="ready">
-    <div class="card-head">{{ icon('brain', 'card-icon') }}<div><h2>Ready to Analyze</h2></div></div>
+    <h2 class="card-title mb-2">Ready to analyze</h2>
     <p id="r-text">Select a commit whose SAST scan has finished.</p>
     <fieldset class="choice inline" id="severities">
       <legend>Severities to analyze</legend>
@@ -108,10 +124,10 @@
     <p class="hint" id="severity-hint" hidden>Pick at least one severity to analyze.</p>
     <fieldset class="choice inline" id="thinking" data-default="{{ default_thinking }}">
       <legend>Model thinking</legend>
-      <label><input type="radio" name="thinking" value="on" {% if default_thinking == 'on' %}checked{% endif %}> On <span class="muted">(reasons first, slower)</span></label>
-      <label><input type="radio" name="thinking" value="off" {% if default_thinking == 'off' %}checked{% endif %}> Off <span class="muted">(answers directly, faster)</span></label>
+      <label><input type="radio" name="thinking" value="on" {% if default_thinking == 'on' %}checked{% endif %}> On <span class="text-secondary">(reasons first, slower)</span></label>
+      <label><input type="radio" name="thinking" value="off" {% if default_thinking == 'off' %}checked{% endif %}> Off <span class="text-secondary">(answers directly, faster)</span></label>
     </fieldset>
-    <button class="primary big" id="start" disabled>{{ icon('play') }} <span>Start Analysis</span></button>
+    <button class="btn btn-primary btn-lg w-100" id="start" disabled>{{ icon('play', 'i me-2') }}<span>Start analysis</span></button>
   </section>
 </section>
 {% endblock %}

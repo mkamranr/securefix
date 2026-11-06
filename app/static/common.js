@@ -1,4 +1,4 @@
-// Shared helpers. No external libraries: everything is served locally for the air-gapped network.
+// Shared helpers. Tabler (Bootstrap) and every other asset are served by the app itself; nothing loads from the internet.
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 
 async function api(path, opts = {}) {
@@ -32,7 +32,7 @@ function when(iso) {
   return d.toISOString().slice(0, 10);
 }
 
-// Connection state for the header and sidebar, cached for a minute so page changes don't re-check.
+// What /api/health reports, cached for a minute so page changes do not re-check.
 async function systemHealth(force = false) {
   const KEY = 'vt-health';
   if (!force) {
@@ -46,30 +46,20 @@ async function systemHealth(force = false) {
   return h;
 }
 
+// GitLab connection state in the header.
 (async () => {
-  const conn = document.getElementById('gitlab-conn'), dot = document.getElementById('status-dot');
-  if (!conn && !dot) return;
+  const conn = document.getElementById('gitlab-conn');
+  if (!conn) return;
   try {
     const h = await systemHealth();
-    if (conn) {
-      conn.dataset.state = h.gitlab.ok ? 'ok' : 'bad';
-      conn.querySelector('.conn-label').textContent = h.gitlab.ok ? 'Connected to GitLab' : 'GitLab not connected';
-      conn.title = h.gitlab.detail || '';
-    }
-    if (dot) {
-      dot.dataset.state = h.gitlab.ok && h.llm.ok ? 'ok' : 'bad';
-      dot.title = h.gitlab.ok && h.llm.ok ? 'GitLab and the model are reachable' : 'Something is unreachable';
-    }
+    conn.dataset.state = h.gitlab.ok ? 'ok' : 'bad';
+    conn.querySelector('.conn-label').textContent = h.gitlab.ok ? 'Connected to GitLab' : 'GitLab not connected';
+    conn.title = h.gitlab.detail || '';
   } catch (_) {
-    if (conn) { conn.dataset.state = 'bad'; conn.querySelector('.conn-label').textContent = 'Status unknown'; }
-    if (dot) dot.dataset.state = 'bad';
+    conn.dataset.state = 'bad';
+    conn.querySelector('.conn-label').textContent = 'Status unknown';
   }
 })();
-
-// Close the account menu when clicking elsewhere.
-document.addEventListener('click', e => {
-  document.querySelectorAll('details.usermenu[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
-});
 
 // Forms that need confirmation carry data-confirm (no inline handlers: the proxy's CSP blocks them).
 document.addEventListener('submit', e => {

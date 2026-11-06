@@ -51,7 +51,7 @@ The exact commit is checked out shallowly. The user's GitLab token is passed to 
 written to disk.
 
 ### 3. Layered context
-For each finding, `context_builder.py` collects code in layers until the token budget (*Code per finding* on the Admin page, `VT_CONTEXT_TOKEN_BUDGET` by default) is
+For each finding, `context_builder.py` collects code in layers until the token budget (*Code per finding* under **Administration › Local model**, `VT_CONTEXT_TOKEN_BUDGET` by default) is
 used up:
 
 1. the file containing the finding;
