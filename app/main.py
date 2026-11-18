@@ -5,6 +5,7 @@ import re
 import secrets
 import time
 from contextlib import asynccontextmanager
+from typing import Literal
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -18,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import gitlab_oauth, ldap_auth, prompts, report, worker
+from . import gitlab_oauth, ldap_auth, prompts, report, security_team, worker
 from .analyzer import DEFAULT_SEVERITIES, SEVERITIES
 from .config import settings
 from .db import AnalysisJob, Finding, ProjectConfig, User, get_db, init_db, utcnow
@@ -356,7 +357,7 @@ def change_password(request: Request, current: str = Form(...), new: str = Form(
 
 
 # ------------------------------------------------------------------ admin
-ADMIN_SECTIONS = ("model", "gitlab", "windows", "users")
+ADMIN_SECTIONS = ("model", "gitlab", "security-team", "windows", "users")
 
 
 @app.get("/admin")
@@ -379,12 +380,15 @@ def admin_page(section: str, request: Request, user: User = Depends(admin_user),
         ctx["oauth"] = {**oauth, "has_secret": bool(oauth["secret"]), "secret": None,
                         "ready": gitlab_oauth.is_enabled(db),
                         "callback": gitlab_oauth.redirect_uri(oauth, str(request.base_url))}
+    elif section == "security-team":
+        ctx["team"] = security_team.team(db)
+        ctx["has_token"] = bool(user.gitlab_token_enc)
     else:  # the users page notes when the Windows admin group sets roles
         ldap = ldap_auth.ldap_config(db)
         ctx["ldap"] = {**ldap, "has_bind_password": bool(ldap["bind_password"]), "bind_password": None}
         if section == "users":
             ctx["users"] = db.scalars(select(User).where(User.password_hash != "disabled").order_by(User.username)).all()
-    return render(request, f"admin/{section}.html", user, section=section, saved=saved, error=error, **ctx)
+    return render(request, f"admin/{section.replace('-', '_')}.html", user, section=section, saved=saved, error=error, **ctx)
 
 
 @app.post("/admin/llm")
@@ -482,6 +486,51 @@ def save_gitlab_signin(request: Request, enabled: str = Form(""), app_id: str = 
     log.info("%s changed the GitLab sign-in settings (enabled=%s)", user.username, bool(enabled))
     state = "on" if enabled else "off"
     return back_to_admin("gitlab", saved=f"GitLab sign-in settings saved. GitLab sign-in is {state}.")
+
+
+@app.get("/api/admin/gitlab/groups")
+def api_admin_groups(search: str = "", user: User = Depends(admin_user)):
+    """GitLab groups to pick the security team from, as the admin's own GitLab token sees them."""
+    with gitlab_for(user) as gl:
+        return [{"id": g["id"], "path": g["full_path"], "name": g.get("full_name") or g["full_path"]}
+                for g in gl.groups(search.strip())]
+
+
+@app.get("/api/admin/gitlab/groups/{gid}/members")
+def api_admin_group_members(gid: int, user: User = Depends(admin_user)):
+    with gitlab_for(user) as gl:
+        return sorted(({"id": m["id"], "username": m["username"], "name": m.get("name") or m["username"]}
+                       for m in gl.group_members(gid)), key=lambda m: m["name"].lower())
+
+
+@app.post("/admin/security-team")
+async def save_security_team(request: Request, user: User = Depends(admin_user), db: Session = Depends(get_db)):
+    """Saves the ticked members of a GitLab group as the security team. The members are read from GitLab again, so
+    only real members of that group are kept, with their current names."""
+    form = await request.form()
+    check_csrf(request, str(form.get("csrf", "")))
+    group_id, group_path = str(form.get("group_id", "")).strip(), str(form.get("group_path", "")).strip()
+    picked = {int(v) for v in form.getlist("member") if str(v).isdigit()}
+    if not picked:
+        security_team.save_team(db, "", None, [])
+        log.info("%s cleared the security team", user.username)
+        return back_to_admin("security-team", saved="Security team cleared. New issues are assigned to the person posting.")
+    if not group_id.isdigit():
+        return back_to_admin("security-team", error="Pick a GitLab group first.")
+    try:
+        with gitlab_for(user) as gl:
+            members = [m for m in gl.group_members(int(group_id)) if m["id"] in picked]
+    except GitLabError as exc:
+        return back_to_admin("security-team", error=f"Couldn't read the group's members from GitLab: {exc}")
+    except HTTPException as exc:  # no GitLab token saved
+        return back_to_admin("security-team", error=exc.detail)
+    if not members:
+        return back_to_admin("security-team", error="None of the ticked people are members of that group.")
+    security_team.save_team(db, group_path, int(group_id), members)
+    log.info("%s set the security team to %s from %s", user.username,
+             ", ".join(m["username"] for m in members), group_path)
+    n = len(members)
+    return back_to_admin("security-team", saved=f"Security team saved: {n} {'person' if n == 1 else 'people'}.")
 
 
 @app.post("/admin/ldap/test")
@@ -614,7 +663,8 @@ def history_page(request: Request, user: User = Depends(current_user), db: Sessi
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 def job_page(job_id: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     job = _job_for(job_id, user, db)
-    return render(request, "job.html", user, job=job, can_act=job.user_id == user.id)
+    return render(request, "job.html", user, job=job, can_act=job.user_id == user.id,
+                  team_size=len(security_team.team(db)["members"]))
 
 
 @app.get("/jobs/{job_id}/report.xlsx")
@@ -879,11 +929,23 @@ def _record(f: Finding, user: User, what: str, url: str | None, db: Session, **e
     db.commit()
 
 
+class NoteIn(BaseModel):
+    assign: Literal["me", "team"] = "me"
+
+
 @app.post("/api/findings/{fid}/note")
-def post_note(fid: int, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Comments the analysis on the finding's issue, creating (and self-assigning) the issue if there is none.
-    Each finding's analysis is posted once; the row lock stops two quick clicks from both posting."""
+def post_note(fid: int, request: Request, body: NoteIn | None = None, user: User = Depends(current_user),
+              db: Session = Depends(get_db)):
+    """Comments the analysis on the finding's issue, creating the issue if there is none. A new issue is assigned to
+    the poster, or with assign=team to every security team member; with assign=team an existing issue gets the team
+    added to its assignees. Each finding's analysis is posted once; the row lock stops two quick clicks from both
+    posting."""
     check_csrf(request)
+    assign = body.assign if body else "me"
+    team = security_team.team(db)["members"] if assign == "team" else []
+    if assign == "team" and not team:
+        raise HTTPException(409, "No security team is set. Ask an administrator to choose one on the "
+                                 "Admin › Security team page.")
     _finding_for(fid, user, db, act=True)
     f = db.get(Finding, fid, with_for_update=True, populate_existing=True)
     posted = prompts.posted_note(f)
@@ -896,14 +958,28 @@ def post_note(fid: int, request: Request, user: User = Depends(current_user), db
     with gitlab_for(user) as gl:
         issue = gl.find_finding_issue(job.project_id, f.uuid, f.vulnerability_gid)
         created = issue is None
+        team_ids = [m["id"] for m in team]
+        assignees = []
         if created:
             issue = gl.create_finding_issue(
                 job.project_id, prompts.issue_title(f),
-                prompts.issue_markdown(f, job, settings.gitlab_url, gl.issue_marker(f.uuid)), f.vulnerability_gid)
+                prompts.issue_markdown(f, job, settings.gitlab_url, gl.issue_marker(f.uuid)), f.vulnerability_gid,
+                assignee_ids=team_ids or None)
+            assignees = issue["assignees"]
+        elif team:
+            assignees = gl.add_issue_assignees(issue["project_id"], issue["iid"], team_ids)
         note = gl.issue_note(issue["project_id"], issue["iid"], prompts.note_markdown(f))
     url = f"{issue['web_url']}#note_{note['id']}" if note.get("id") else issue["web_url"]
-    where = f"new issue #{issue['iid']} (assigned to you)" if created else f"issue #{issue['iid']}"
-    _record(f, user, f"analysis posted on {where}", url, db, kind="note", issue_iid=issue["iid"])
+    if not team:
+        where = f"new issue #{issue['iid']} (assigned to you)" if created else f"issue #{issue['iid']}"
+    else:
+        where = (f"new issue #{issue['iid']} (assigned to the security team)" if created
+                 else f"issue #{issue['iid']} (security team added as assignees)")
+        kept = {a["id"] for a in assignees}
+        missed = [m["username"] for m in team if m["id"] not in kept]
+        if missed:  # GitLab leaves out users it can't assign, e.g. without access to the project
+            where += "; GitLab didn't assign " + ", ".join(f"@{u}" for u in missed) + " (no access to the project?)"
+    _record(f, user, f"analysis posted on {where}", url, db, kind="note", issue_iid=issue["iid"], assigned_to=assign)
     return {"ok": True, "url": url, "where": where, "issue_iid": issue["iid"], "created": created}
 
 

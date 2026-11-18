@@ -80,6 +80,18 @@ and people connect by signing in with GitLab. While it is off, everyone saves th
 A user needs at least the Developer role on a project to see its vulnerabilities. Creating an issue needs at least
 the Reporter role, and linking it to a vulnerability needs Developer.
 
+## Security team
+
+Under **Administration › Security team**, an administrator picks the people that posted analyses can be assigned to:
+search for a GitLab group (e.g. your security group), then tick the members who triage. Not every member of the group
+has to be on the team. The groups and members are read with the administrator's own GitLab token, so save one on
+**Settings** (or sign in with GitLab) first. Saving with no one ticked clears the team.
+
+When a team is set, the job page offers **Assign to me** or **Assign to security team** when posting. With the team,
+every member becomes an assignee of the finding's issue and gets a GitLab To-Do. Several assignees per issue need
+GitLab Premium or Ultimate. People also need access to the project to be assigned; GitLab leaves out anyone without it,
+and the person posting is told who was left out.
+
 ## Windows sign-in
 
 Administrators set it up under **Administration › Windows sign-in**:

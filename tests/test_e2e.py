@@ -402,8 +402,11 @@ def test_non_admin_cannot_change_llm_settings(fake_services, client):
         assert "Local model (vLLM)" not in bob.get("/settings").text
         assert bob.get("/admin").status_code == 403
         for path, data in (("/admin/llm", {"base_url": "http://evil:1/v1", "model": "m", "timeout_s": "60"}),
-                           ("/admin/llm/reset", {}), ("/admin/ldap", {"enabled": "1"}), ("/admin/ldap/test", {})):
+                           ("/admin/llm/reset", {}), ("/admin/ldap", {"enabled": "1"}), ("/admin/ldap/test", {}),
+                           ("/admin/security-team", {"group_id": "50", "member": "11"})):
             assert bob.post(path, data={**data, "csrf": token}).status_code == 403
+        assert bob.get("/api/admin/gitlab/groups").status_code == 403
+        assert bob.get("/api/admin/gitlab/groups/50/members").status_code == 403
         assert "models" not in bob.get("/api/health").json()["llm"]  # served models are for admins
         assert bob.get("/jobs/1/report.xlsx").status_code == 400  # no GitLab token: can't prove project access
 
@@ -1136,3 +1139,73 @@ def test_fix_mr_reads_older_records():
              status="done", copied_from=None, id=1)
     assert fix_mr(old)["mr_iid"] == 12 and fix_mr(old)["by"] == "bob"
     assert fix_mr(NS(actions=[], status="done", copied_from=None, id=2)) is None
+
+
+def test_security_team_assignment(client, fake_services):
+    """An admin picks a security team from a GitLab group; a post can assign the issue to all of them."""
+    from sqlalchemy import update
+    from app.analyzer import JobRunner
+    from app.db import Finding, SessionLocal
+    from app.worker import _claim_next
+    gl = fake_services.gitlab
+    saved_issues = gl.state.get("issues", [])
+    gl.state["issues"] = []
+    h = {"X-CSRF-Token": csrf(client, "/")}
+
+    def fresh_job():
+        with SessionLocal() as db:
+            db.execute(update(Finding).values(cache_key="", code_key="-"))  # analyze again: nothing posted yet
+            db.commit()
+        job_id = client.post("/api/jobs", headers=h, json={"project_id": 1, "project_path": "grp/app",
+                                                           "branch": "feature/login", "sha": fake_services.SHA,
+                                                           "severities": ["high", "low"]}).json()["id"]
+        assert _claim_next() == job_id
+        JobRunner(job_id).run()
+        return job_id, client.get(f"/api/jobs/{job_id}").json()["findings"]
+
+    try:
+        job_id, (real, fp) = fresh_job()
+        r = client.post(f"/api/findings/{real['id']}/note", headers=h, json={"assign": "team"})
+        assert r.status_code == 409 and "No security team is set" in r.json()["detail"] and not gl.state["issues"]
+        assert 'id="assign-selected"' not in client.get(f"/jobs/{job_id}").text
+
+        # The admin browses groups and members with their own GitLab token; blocked members aren't offered.
+        page = client.get("/admin/security-team")
+        assert page.status_code == 200 and "No security team is set" in page.text
+        assert client.get("/api/admin/gitlab/groups?search=sec").json() == [
+            {"id": 50, "path": "sec/team", "name": "Security / Team"}]
+        members = client.get("/api/admin/gitlab/groups/50/members").json()
+        assert [m["username"] for m in members] == ["sam", "tia", "uma"]
+        token = csrf(client, "/admin/security-team")
+        r = client.post("/admin/security-team", data={"csrf": token, "group_id": "50", "group_path": "sec/team",
+                                                      "member": ["11", "12", "99"]})  # 99 isn't a member
+        assert "Security team saved: 2 people." in r.text and "Sam Lee" in r.text and "Uma Roy" not in r.text
+        page = client.get(f"/jobs/{job_id}").text
+        assert 'data-team-size="2"' in page and 'id="assign-selected"' in page
+
+        # New issue: every team member is assigned, not the poster.
+        r = client.post(f"/api/findings/{real['id']}/note", headers=h, json={"assign": "team"}).json()
+        assert r["created"] and r["where"] == "new issue #1 (assigned to the security team)"
+        assert gl.state["issues"][0]["assignee_ids"] == [11, 12] and gl.state["issues"][0]["confidential"]
+        # Posting without a choice still assigns the poster.
+        r = client.post(f"/api/findings/{fp['id']}/note", headers=h).json()
+        assert r["where"] == "new issue #2 (assigned to you)" and gl.state["issues"][1]["assignee_ids"] == [1]
+        acts = client.get(f"/api/jobs/{job_id}").json()["findings"]
+        assert acts[0]["actions"][-1]["assigned_to"] == "team" and acts[1]["actions"][-1]["assigned_to"] == "me"
+
+        # Existing issue: the team is added to its assignees; one GitLab can't assign is named.
+        fake_services.NO_ACCESS.add(12)
+        _, (_, fp2) = fresh_job()
+        r = client.post(f"/api/findings/{fp2['id']}/note", headers=h, json={"assign": "team"}).json()
+        assert not r["created"] and r["issue_iid"] == 2
+        assert r["where"].startswith("issue #2 (security team added as assignees)") and "@tia" in r["where"]
+        assert gl.state["issue_edits"][-1] == (2, {"assignee_ids": [1, 11, 12]})
+        assert gl.state["issues"][1]["assignee_ids"] == [1, 11]
+
+        # Saving with no one ticked clears the team.
+        r = client.post("/admin/security-team", data={"csrf": token, "group_id": "50", "group_path": "sec/team"})
+        assert "Security team cleared" in r.text
+        assert client.post(f"/api/findings/{fp2['id']}/note", headers=h, json={"assign": "team"}).status_code == 409
+    finally:
+        fake_services.NO_ACCESS.clear()
+        gl.state["issues"] = saved_issues

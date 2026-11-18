@@ -34,8 +34,8 @@ separate the real vulnerabilities from the noise, then writing up the reasoning 
 3. **asks a locally hosted model (vLLM) for a verdict**, several times independently. If the runs disagree, the
    finding goes to a human as *Needs review*;
 4. **proposes a fix for real vulnerabilities** and checks it with your project's own build, tests and a re-scan;
-5. **lets your team act on it**: post the analysis to the GitLab issue, open a fix merge request, or dismiss a false
-   positive, each with the user's own GitLab token.
+5. **lets your team act on it**: post the analysis to the GitLab issue and assign it to yourself or the whole
+   security team, open a fix merge request, or dismiss a false positive, each with the user's own GitLab token.
 
 Nothing is dismissed, merged or posted automatically, and nothing contacts the internet.
 
@@ -49,6 +49,7 @@ Nothing is dismissed, merged or posted automatically, and nothing contacts the i
 | 🛠️ **Validated fixes** | Fixes are applied, built, tested and re-scanned. A failed validation gets one retry with the error output. |
 | ♻️ **No repeated work** | Unchanged findings reuse earlier analyses, and an analysis already posted to GitLab is never posted twice. |
 | 👤 **Your permissions, your name** | Every GitLab call uses the acting user's encrypted token; every action is audited. |
+| 👥 **Security team routing** | Admins pick a security team from a GitLab group; a posted analysis can assign the issue to every member at once, so each gets a GitLab To-Do. |
 | 🛡️ **Prompt-injection aware** | Code containing text addressed to an AI or reviewer is flagged. Prompts and responses are kept for audit. |
 | 📊 **Excel reports** | Summary and per-finding sheets with verdicts, fixes, issues, MRs and who posted what. |
 | 🏢 **Enterprise sign-in** | Sign in with GitLab (no tokens to set up), Active Directory (LDAP/LDAPS) with group-based access and admin roles, or local accounts. |
@@ -106,7 +107,7 @@ token under **Settings** and starts from **Analyze Commit**.
 | [How it works](docs/how-it-works.md) | Architecture, analysis pipeline, triage, fix validation |
 | [User guide](docs/user-guide.md) | Analyzing commits, reviewing results, posting, fix MRs, reports |
 | [Deployment](docs/deployment.md) | Air-gap bundle, install, HTTPS, upgrades, patches, operations |
-| [Configuration](docs/configuration.md) | Environment variables, model settings, token scopes, Windows sign-in, fix validation |
+| [Configuration](docs/configuration.md) | Environment variables, model settings, token scopes, security team, Windows sign-in, fix validation |
 | [Security](docs/security.md) | Credentials, web protections, prompt injection, isolation |
 | [Development](docs/development.md) | Local setup, tests, project layout, releasing |
 

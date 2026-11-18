@@ -2,7 +2,7 @@
 {% block title %}Analysis #{{ job.id }} · SecureFix{% endblock %}
 {% block container_class %}container-fluid{% endblock %}
 {% block content %}
-<div id="job" data-job-id="{{ job.id }}" data-can-act="{{ 1 if can_act else 0 }}">
+<div id="job" data-job-id="{{ job.id }}" data-can-act="{{ 1 if can_act else 0 }}" data-team-size="{{ team_size }}">
   <header class="page-header job-head">
     <div>
       <div class="page-pretitle"><a href="/history">History</a> › Analysis #{{ job.id }}</div>
@@ -33,6 +33,7 @@
   </div>
   <div class="bulkbar" id="bulkbar" hidden>
     <span id="sel-count" class="sel-count">No findings selected</span>
+    {% if team_size %}<select class="form-select w-auto" id="assign-selected" aria-label="Assign new issues to"><option value="me">Assign to me</option><option value="team">Assign to security team ({{ team_size }})</option></select>{% endif %}
     <button class="btn btn-primary" id="post-selected" disabled>Post analysis to GitLab issues</button>
     <button class="btn btn-link" id="clear-sel" hidden>Clear selection</button>
     <span id="bulk-msg" class="act-msg" role="status" aria-live="polite"></span>

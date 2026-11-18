@@ -117,6 +117,33 @@ def issues(search: str = ""):
     return [i for i in gitlab.state.setdefault("issues", []) if search in i["description"]]
 
 
+# Group the security team is picked from. NO_ACCESS: members GitLab won't assign (no access to project 1).
+GROUPS = [{"id": 50, "full_path": "sec/team", "full_name": "Security / Team"}]
+GROUP_MEMBERS = [{"id": 11, "username": "sam", "name": "Sam Lee", "state": "active"},
+                 {"id": 12, "username": "tia", "name": "Tia Ng", "state": "active"},
+                 {"id": 13, "username": "uma", "name": "Uma Roy", "state": "active"},
+                 {"id": 14, "username": "vic", "name": "Vic Old", "state": "blocked"}]
+NO_ACCESS: set[int] = set()
+
+
+@gitlab.get("/api/v4/groups")
+def groups(search: str = ""): return [g for g in GROUPS if search in g["full_path"]]
+
+
+@gitlab.get("/api/v4/groups/50/members/all")
+def group_members(page: int = 1): return GROUP_MEMBERS if page == 1 else []
+
+
+def _assignees(ids: list[int]) -> list[dict]:
+    people = {u["id"]: u for u in [*USERS.values(), *GROUP_MEMBERS]}
+    return [{"id": i, "username": people.get(i, {}).get("username", f"u{i}")} for i in ids if i not in NO_ACCESS]
+
+
+def _set_assignees(issue: dict, ids: list[int]):
+    issue["assignees"] = _assignees(ids)
+    issue["assignee_ids"] = [a["id"] for a in issue["assignees"]]
+
+
 @gitlab.post("/api/v4/projects/1/issues")
 async def new_issue(request: Request):
     body = await request.json()
@@ -124,7 +151,22 @@ async def new_issue(request: Request):
     iid = len(store) + 1
     issue = {"id": 1000 + iid, "iid": iid, "project_id": 1, "state": "opened", "notes": [],
              "web_url": f"http://gl/grp/app/-/issues/{iid}", **body}
+    _set_assignees(issue, body.get("assignee_ids") or [])
     store.append(issue)
+    return issue
+
+
+@gitlab.get("/api/v4/projects/1/issues/{iid}")
+def get_issue(iid: int): return next(i for i in gitlab.state["issues"] if i["iid"] == iid)
+
+
+@gitlab.put("/api/v4/projects/1/issues/{iid}")
+async def edit_issue(iid: int, request: Request):
+    issue = next(i for i in gitlab.state["issues"] if i["iid"] == iid)
+    body = await request.json()
+    gitlab.state.setdefault("issue_edits", []).append((iid, body))
+    if "assignee_ids" in body:
+        _set_assignees(issue, body["assignee_ids"])
     return issue
 
 

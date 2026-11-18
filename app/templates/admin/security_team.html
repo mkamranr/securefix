@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% block title %}Security team · Admin · SecureFix{% endblock %}
+{% block content %}
+{{ ui.page_header('Security team', 'People who posted analyses can be assigned to. When someone posts with "Assign to security team", every person here is made an assignee of the GitLab issue and gets a GitLab To-Do.', 'Administration') }}
+{{ ui.flash(saved, error) }}
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header">
+        <h2 class="card-title">Current team</h2>
+        <div class="card-actions"><span class="badge">{{ team.members | length }}</span></div>
+      </div>
+      {% if team.members %}
+      <div class="card-body">
+        <p class="text-secondary small">Picked from the GitLab group <strong>{{ team.group }}</strong>.</p>
+        <ul class="list-unstyled mb-0">
+          {% for m in team.members %}<li class="mb-1"><strong>{{ m.name }}</strong> <span class="text-secondary">@{{ m.username }}</span></li>{% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <div class="card-body"><p class="text-secondary mb-0">No security team is set, so new issues are assigned to the person posting.</p></div>
+      {% endif %}
+      <div class="card-footer text-secondary small">People need access to a project to be assigned to its issues. GitLab leaves out anyone without access, and the person posting is told who was left out.</div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <form method="post" action="/admin/security-team" class="card h-100" id="team-form"
+          data-group-id="{{ team.group_id or '' }}" data-group-path="{{ team.group }}"
+          data-members="{{ team.members | map(attribute='id') | join(',') }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="group_id" id="team-group-id" value="{{ team.group_id or '' }}">
+      <input type="hidden" name="group_path" id="team-group-path" value="{{ team.group }}">
+      <div class="card-header"><h2 class="card-title">Choose the team</h2></div>
+      <div class="card-body">
+        {% if not has_token %}
+        <p class="alert alert-warning mb-0">The GitLab groups are read with your own GitLab token. <a href="/settings">Add your GitLab token in Settings</a> first.</p>
+        {% else %}
+        <label class="form-label" for="team-search">GitLab group</label>
+        <div class="input-group mb-2">
+          <input class="form-control" id="team-search" placeholder="Search groups, e.g. security" value="{{ team.group }}" autocomplete="off">
+          <button class="btn" type="button" id="team-search-btn">{{ icon('search', 'i me-1') }}Search</button>
+        </div>
+        <div id="team-groups" class="list-group mb-3" hidden></div>
+        <p id="team-msg" class="text-secondary small" role="status" aria-live="polite"></p>
+        <fieldset id="team-members" hidden>
+          <legend class="form-label">Members of <strong id="team-group-name"></strong></legend>
+          <p class="form-hint">Tick the people who should be assigned.</p>
+          <div id="team-member-list"></div>
+        </fieldset>
+        {% endif %}
+      </div>
+      {% if has_token %}<div class="card-footer"><button class="btn btn-primary">Save security team</button></div>{% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/admin.js"></script>{% endblock %}

@@ -87,6 +87,9 @@ class GitLabClient:
     def post(self, path, payload):
         return self._req("POST", path, json=payload).json()
 
+    def put(self, path, payload):
+        return self._req("PUT", path, json=payload).json()
+
     def graphql(self, query: str, variables: dict | None = None) -> dict:
         try:
             r = self._send(self.gql_http, "POST", f"{self.base_url}/api/graphql",
@@ -112,6 +115,20 @@ class GitLabClient:
             return self.get("/personal_access_tokens/self").get("scopes", [])
         except GitLabError:
             return []
+
+    # ---------- groups (the Admin › Security team page) ----------
+    def groups(self, search: str = "") -> list[dict]:
+        return self.get("/groups", search=search, order_by="name", per_page=20)
+
+    def group_members(self, group_id: int) -> list[dict]:
+        """Active members of a group, including those inherited from parent groups."""
+        out, page = [], 1
+        while True:
+            batch = self.get(f"/groups/{group_id}/members/all", per_page=100, page=page)
+            out.extend(m for m in batch if m.get("state", "active") == "active")
+            if len(batch) < 100:
+                return out
+            page += 1
 
     # ---------- picker ----------
     def projects(self, search: str = "", page: int = 1) -> list[dict]:
@@ -290,11 +307,13 @@ class GitLabClient:
         return issue
 
     def create_finding_issue(self, project_id: int, title: str, description: str,
-                             vulnerability_gid: str | None) -> dict:
-        """Confidential issue assigned to the token's owner, linked to the vulnerability when there is one."""
-        me = self.current_user()
+                             vulnerability_gid: str | None, assignee_ids: list[int] | None = None) -> dict:
+        """Confidential issue assigned to `assignee_ids` (default: the token's owner), linked to the vulnerability
+        when there is one. `assignees` in the result are those GitLab kept (it drops users who can't be assigned)."""
+        if assignee_ids is None:
+            assignee_ids = [self.current_user()["id"]]
         issue = self.post(f"/projects/{project_id}/issues", {"title": title[:255], "description": description,
-                                                             "assignee_ids": [me["id"]], "confidential": True})
+                                                             "assignee_ids": assignee_ids, "confidential": True})
         if vulnerability_gid:
             q = """mutation($issue: IssueID!, $vulns: [VulnerabilityID!]!) {
                      vulnerabilityIssueLinkCreate(input: {issueId: $issue, vulnerabilityIds: $vulns}) { errors } }"""
@@ -305,7 +324,17 @@ class GitLabClient:
                     log.warning("Issue %s not linked to %s: %s", issue["iid"], vulnerability_gid, errors)
             except GitLabError as exc:  # the issue is still found again through its marker
                 log.warning("Issue %s not linked to %s: %s", issue["iid"], vulnerability_gid, exc)
-        return {"project_id": project_id, "iid": issue["iid"], "web_url": issue["web_url"], "state": "opened"}
+        return {"project_id": project_id, "iid": issue["iid"], "web_url": issue["web_url"], "state": "opened",
+                "assignees": issue.get("assignees") or []}
+
+    def add_issue_assignees(self, project_id: int, issue_iid: int, user_ids: list[int]) -> list[dict]:
+        """Adds users to an issue's assignees, keeping the current ones; returns the assignees GitLab now has."""
+        issue = self.get(f"/projects/{project_id}/issues/{issue_iid}")
+        current = [a["id"] for a in issue.get("assignees") or []]
+        wanted = current + [i for i in user_ids if i not in current]
+        if wanted == current:
+            return issue.get("assignees") or []
+        return self.put(f"/projects/{project_id}/issues/{issue_iid}", {"assignee_ids": wanted}).get("assignees") or []
 
     def issue_note(self, project_id: int, issue_iid: int, body: str) -> dict:
         return self.post(f"/projects/{project_id}/issues/{issue_iid}/notes", {"body": body})

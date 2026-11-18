@@ -5,6 +5,11 @@
   const $ = id => document.getElementById(id);
   const rows = new Map();      // finding id -> {el, sig, f}
   const selected = new Set();  // finding ids picked for posting to GitLab
+  const teamSize = Number(root.dataset.teamSize || 0);  // security team set by an admin; 0: issues go to the poster
+  const assignTo = new Map();  // finding id -> 'me' | 'team', kept across redraws
+  const assignSelect = fid => !teamSize ? '' : `<select class="form-select w-auto assign-to" aria-label="Assign the issue to">${
+    [['me', 'Assign to me'], ['team', `Assign to security team (${teamSize})`]].map(([v, l]) =>
+      `<option value="${v}"${(assignTo.get(fid) || 'me') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
   let filter = 'all', timer = null, job = null, posting = false;
   const eligible = f => canAct && f.status === 'done' && !f.posted;
   const pct = c => c != null ? `${Math.round(c * 100)}%` : '';
@@ -113,7 +118,7 @@
     } else if (f.status === 'done') {
       const p = f.posted;
       const btns = [p ? '<button data-act="note" class="btn done" disabled>Analysis posted ✓</button>'
-                      : '<button class="btn" data-act="note">Post analysis to GitLab issue</button>'];
+                      : `${assignSelect(f.id)}<button class="btn" data-act="note">Post analysis to GitLab issue</button>`];
       if (m) btns.push(`<button data-act="mr" class="btn done" disabled>Merge request${mrIid} opened ✓</button>`);
       else if (f.fix && f.diff) btns.push('<button class="btn btn-primary" data-act="mr">Open fix merge request</button>');
       if (f.verdict === 'needs_review') {
@@ -124,7 +129,9 @@
         p.copied_from_job ? ` from the earlier <a href="/jobs/${esc(p.copied_from_job)}">analysis #${esc(p.copied_from_job)}</a>` : ''} by ${esc(p.by)}, ${esc(when(p.at))}${
         p.url ? ` (<a href="${esc(p.url)}" target="_blank" rel="noopener">open comment</a>)` : ''}.` : '';
       parts.push(`<div class="actions">${btns.join('')}<span class="act-msg" role="status">${[posted, mrLine].filter(Boolean).join(' ')}</span></div>`);
-      if (!p) parts.push('<p class="hint">The analysis is added once as a comment on this vulnerability’s GitLab issue. If it has none yet, a confidential issue is created first and assigned to you.</p>');
+      if (!p) parts.push(teamSize
+        ? '<p class="hint">The analysis is added once as a comment on this vulnerability’s GitLab issue. If it has none yet, a confidential issue is created first. <em>Assign to me</em> assigns a new issue to you. <em>Assign to security team</em> makes every team member an assignee, of a new issue or the existing one, so each gets a GitLab To-Do.</p>'
+        : '<p class="hint">The analysis is added once as a comment on this vulnerability’s GitLab issue. If it has none yet, a confidential issue is created first and assigned to you.</p>');
     }
     if ((f.actions || []).length) {
       parts.push(`<ul class="audit">${f.actions.map(a => `<li>${esc(a.type)} by ${esc(a.by)}, ${esc(when(a.at))}${a.url ? ` (<a href="${esc(a.url)}" target="_blank" rel="noopener">open</a>)` : ''}</li>`).join('')}</ul>`);
@@ -158,6 +165,7 @@
       head.setAttribute('aria-expanded', String(open)); body.hidden = !open;
     });
     body.addEventListener('click', e => { const b = e.target.closest('button[data-act]'); if (b) act(f.id, b.dataset.act, b); });
+    body.addEventListener('change', e => { if (e.target.matches('select.assign-to')) assignTo.set(f.id, e.target.value); });
     return el;
   }
 
@@ -212,6 +220,7 @@
     $('post-selected').disabled = posting || !n;
     $('post-selected').textContent = n ? `Post ${n} to GitLab issues` : 'Post analysis to GitLab issues';
     $('clear-sel').hidden = posting || !n;
+    if (teamSize) $('assign-selected').disabled = posting;
     const pickAll = $('pick-all');
     if (!canAct) pickAll.closest('.pick').style.visibility = 'hidden';
     pickAll.disabled = posting || !pickable.length;
@@ -226,14 +235,17 @@
     const ids = [...rows.values()].filter(r => selected.has(r.f.id) && eligible(r.f)).map(r => r.f.id);
     if (!ids.length) return;
     const many = ids.length === 1 ? 'this finding' : `these ${ids.length} findings`;
-    if (!confirm(`Post the analysis of ${many} to GitLab? Each is added as a comment on its vulnerability’s issue; a finding without an issue gets a new confidential issue assigned to you.`)) return;
+    const assign = teamSize ? $('assign-selected').value : 'me';
+    if (!confirm(assign === 'team'
+      ? `Post the analysis of ${many} to GitLab? Each is added as a comment on its vulnerability’s issue (a new confidential issue if it has none), and the ${teamSize} security team members are made assignees of each issue.`
+      : `Post the analysis of ${many} to GitLab? Each is added as a comment on its vulnerability’s issue; a finding without an issue gets a new confidential issue assigned to you.`)) return;
     posting = true; syncAll();
     const msg = $('bulk-msg'), failed = [];
     let ok = 0, already = 0, stopped = false;
     for (const [i, id] of ids.entries()) {
       msg.textContent = `Posting ${i + 1} of ${ids.length}…`;
       try {
-        await api(`/api/findings/${id}/note`, { method: 'POST' });
+        await api(`/api/findings/${id}/note`, { method: 'POST', body: { assign } });
         ok++; selected.delete(id);
       } catch (e) {
         if (e.status === 409) { already++; selected.delete(id); continue; }
@@ -261,7 +273,8 @@
       : 'Mark this finding as a false positive?')) return;
     btn.disabled = true; msg.textContent = 'Working…';
     try {
-      const r = await api(`/api/findings/${fid}/${kind}`, { method: 'POST' });
+      const body = kind === 'note' ? { assign: assignTo.get(fid) || 'me' } : undefined;
+      const r = await api(`/api/findings/${fid}/${kind}`, { method: 'POST', body });
       msg.innerHTML = kind === 'dismiss' ? 'Dismissed in GitLab.'
         : kind === 'confirm' ? 'Confirmed. Writing the fix…'
         : kind === 'false-positive' ? (r.dismissed ? 'Marked as a false positive and dismissed in GitLab.' : 'Marked as a false positive.')
