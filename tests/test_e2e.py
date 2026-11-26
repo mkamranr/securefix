@@ -89,7 +89,8 @@ def test_full_flow(client, fake_services):
 
     # First post creates a confidential issue assigned to the poster, then comments on it.
     r = c.post(f"/api/findings/{fp['id']}/note", headers=h).json()
-    assert r["created"] is True and r["where"] == "new issue #1 (assigned to you)"
+    assert r["created"] is True and r["where"].startswith("new issue #1 (assigned to you); not linked to a vulnerability: ")
+    assert "only default-branch pipelines" in r["where"]
     issue = fake_services.gitlab.state["issues"][0]
     assert issue["assignee_ids"] == [1] and issue["confidential"] is True
     assert "[Low] Hard-coded value in query in app.py:17" == issue["title"]
@@ -1185,11 +1186,11 @@ def test_security_team_assignment(client, fake_services):
 
         # New issue: every team member is assigned, not the poster.
         r = client.post(f"/api/findings/{real['id']}/note", headers=h, json={"assign": "team"}).json()
-        assert r["created"] and r["where"] == "new issue #1 (assigned to the security team)"
+        assert r["created"] and r["where"].startswith("new issue #1 (assigned to the security team)")
         assert gl.state["issues"][0]["assignee_ids"] == [11, 12] and gl.state["issues"][0]["confidential"]
         # Posting without a choice still assigns the poster.
         r = client.post(f"/api/findings/{fp['id']}/note", headers=h).json()
-        assert r["where"] == "new issue #2 (assigned to you)" and gl.state["issues"][1]["assignee_ids"] == [1]
+        assert r["where"].startswith("new issue #2 (assigned to you)") and gl.state["issues"][1]["assignee_ids"] == [1]
         acts = client.get(f"/api/jobs/{job_id}").json()["findings"]
         assert acts[0]["actions"][-1]["assigned_to"] == "team" and acts[1]["actions"][-1]["assigned_to"] == "me"
 
@@ -1208,4 +1209,57 @@ def test_security_team_assignment(client, fake_services):
         assert client.post(f"/api/findings/{fp2['id']}/note", headers=h, json={"assign": "team"}).status_code == 409
     finally:
         fake_services.NO_ACCESS.clear()
+        gl.state["issues"] = saved_issues
+
+
+def test_issue_created_from_vulnerability(client, fake_services):
+    """A finding with a vulnerability record gets its issue created from the vulnerability, as GitLab's own
+    "Create issue" button does; an older GitLab gets a plain issue linked as related."""
+    from sqlalchemy import update
+    from app.analyzer import JobRunner
+    from app.db import Finding, SessionLocal
+    from app.worker import _claim_next
+    gl = fake_services.gitlab
+    saved_issues = gl.state.get("issues", [])
+    gl.state["issues"], gl.state["vuln_links"] = [], []
+    h = {"X-CSRF-Token": csrf(client, "/")}
+
+    def fresh_job(gids):
+        with SessionLocal() as db:
+            db.execute(update(Finding).values(cache_key="", code_key="-"))  # analyze again: nothing posted yet
+            db.commit()
+        job_id = client.post("/api/jobs", headers=h, json={"project_id": 1, "project_path": "grp/app",
+                                                           "branch": "feature/login", "sha": fake_services.SHA,
+                                                           "severities": ["high", "low"]}).json()["id"]
+        assert _claim_next() == job_id
+        JobRunner(job_id).run()
+        findings = client.get(f"/api/jobs/{job_id}").json()["findings"]
+        with SessionLocal() as db:
+            for f, gid in zip(findings, gids):
+                db.get(Finding, f["id"]).vulnerability_gid = gid
+            db.commit()
+        return findings
+
+    try:
+        real, fp = fresh_job(["gid://gitlab/Vulnerability/1111", "gid://gitlab/Vulnerability/2222"])
+        r = client.post(f"/api/findings/{real['id']}/note", headers=h).json()
+        assert r["created"] and r["where"] == "new issue #1 (assigned to you), created from vulnerability #1111"
+        assert gl.state["vuln_links"] == [("gid://gitlab/Vulnerability/1111", 1, "created")]
+        issue = gl.state["issues"][0]
+        assert issue["confidential"] is True and issue["assignee_ids"] == [1]
+        assert issue["title"].startswith("[High]") and f"vulntriage-finding: {real['uuid']}" in issue["description"]
+        assert len(issue["notes"]) == 1 and len(gl.state["issues"]) == 1
+
+        # An older GitLab without the mutation: a plain issue, linked to the vulnerability as related.
+        gl.state["old_gitlab"] = True
+        r = client.post(f"/api/findings/{fp['id']}/note", headers=h).json()
+        assert r["created"] and r["where"] == "new issue #2 (assigned to you), linked to vulnerability #2222"
+        assert gl.state["vuln_links"][-1] == ("gid://gitlab/Vulnerability/2222", 2, "related")
+
+        # A new analysis finds the issue through the vulnerability's links and only comments on it.
+        real2, _ = fresh_job(["gid://gitlab/Vulnerability/1111", None])
+        r = client.post(f"/api/findings/{real2['id']}/note", headers=h).json()
+        assert not r["created"] and r["issue_iid"] == 1 and len(gl.state["issues"]) == 2
+    finally:
+        gl.state.pop("old_gitlab", None)
         gl.state["issues"] = saved_issues

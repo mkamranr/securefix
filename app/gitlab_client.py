@@ -306,26 +306,63 @@ class GitLabClient:
         issue["project_id"] = issue.get("project_id") or project_id
         return issue
 
+    def _create_issue_from_vulnerability(self, project_id: int, vulnerability_gid: str) -> dict:
+        """An issue GitLab creates from the vulnerability, as its "Create issue" button does: the link has type
+        `created`, so the issue shows "Created from vulnerability". Raises GitLabError when GitLab can't
+        (older GitLab without the mutation, or no permission)."""
+        q = """mutation($p: ProjectID!, $vulns: [VulnerabilityID!]!) {
+                 vulnerabilitiesCreateIssue(input: {project: $p, vulnerabilityIds: $vulns}) {
+                   issue { id iid webUrl } errors } }"""
+        d = self.graphql(q, {"p": f"gid://gitlab/Project/{project_id}", "vulns": [vulnerability_gid]})
+        res = d.get("vulnerabilitiesCreateIssue") or {}
+        if res.get("errors"):
+            raise GitLabError("; ".join(res["errors"]))
+        if not res.get("issue"):
+            raise GitLabError("GitLab didn't return the new issue.")
+        return res["issue"]
+
+    def _link_issue_to_vulnerability(self, issue_id: int, vulnerability_gid: str) -> str | None:
+        """Links an existing issue to the vulnerability as `related`; returns why it failed, or None."""
+        q = """mutation($issue: IssueID!, $vulns: [VulnerabilityID!]!) {
+                 vulnerabilityIssueLinkCreate(input: {issueId: $issue, vulnerabilityIds: $vulns}) { errors } }"""
+        try:
+            d = self.graphql(q, {"issue": f"gid://gitlab/Issue/{issue_id}", "vulns": [vulnerability_gid]})
+        except GitLabError as exc:
+            return str(exc)
+        errors = (d.get("vulnerabilityIssueLinkCreate") or {}).get("errors")
+        return "; ".join(errors) if errors else None
+
     def create_finding_issue(self, project_id: int, title: str, description: str,
                              vulnerability_gid: str | None, assignee_ids: list[int] | None = None) -> dict:
-        """Confidential issue assigned to `assignee_ids` (default: the token's owner), linked to the vulnerability
-        when there is one. `assignees` in the result are those GitLab kept (it drops users who can't be assigned)."""
+        """Confidential issue assigned to `assignee_ids` (default: the token's owner). With a vulnerability, GitLab
+        creates it from the vulnerability (link `created`); an older GitLab gets a plain issue linked as `related`.
+        `assignees` in the result are those GitLab kept (it drops users who can't be assigned). `link` is
+        "created", "related" or None, with `link_error` saying why when there is no link."""
         if assignee_ids is None:
             assignee_ids = [self.current_user()["id"]]
-        issue = self.post(f"/projects/{project_id}/issues", {"title": title[:255], "description": description,
-                                                             "assignee_ids": assignee_ids, "confidential": True})
-        if vulnerability_gid:
-            q = """mutation($issue: IssueID!, $vulns: [VulnerabilityID!]!) {
-                     vulnerabilityIssueLinkCreate(input: {issueId: $issue, vulnerabilityIds: $vulns}) { errors } }"""
+        fields = {"title": title[:255], "description": description, "assignee_ids": assignee_ids,
+                  "confidential": True}
+        link, link_error = None, None
+        if not vulnerability_gid:
+            link_error = "GitLab has no vulnerability record for this finding (only default-branch pipelines get one)"
+        else:
             try:
-                d = self.graphql(q, {"issue": f"gid://gitlab/Issue/{issue['id']}", "vulns": [vulnerability_gid]})
-                errors = (d.get("vulnerabilityIssueLinkCreate") or {}).get("errors")
-                if errors:
-                    log.warning("Issue %s not linked to %s: %s", issue["iid"], vulnerability_gid, errors)
-            except GitLabError as exc:  # the issue is still found again through its marker
-                log.warning("Issue %s not linked to %s: %s", issue["iid"], vulnerability_gid, exc)
-        return {"project_id": project_id, "iid": issue["iid"], "web_url": issue["web_url"], "state": "opened",
-                "assignees": issue.get("assignees") or []}
+                created = self._create_issue_from_vulnerability(project_id, vulnerability_gid)
+            except GitLabError as exc:
+                log.warning("Couldn't create an issue from %s, creating a plain one: %s", vulnerability_gid, exc)
+            else:  # our title, analysis and marker replace the text GitLab generated
+                issue = self.put(f"/projects/{project_id}/issues/{created['iid']}", fields)
+                link = "created"
+        if link is None:
+            issue = self.post(f"/projects/{project_id}/issues", fields)
+            if vulnerability_gid:
+                link_error = self._link_issue_to_vulnerability(issue["id"], vulnerability_gid)
+                if link_error:  # the issue is still found again through its marker
+                    log.warning("Issue %s not linked to %s: %s", issue["iid"], vulnerability_gid, link_error)
+                else:
+                    link = "related"
+        return {"project_id": project_id, "iid": int(issue["iid"]), "web_url": issue["web_url"], "state": "opened",
+                "assignees": issue.get("assignees") or [], "link": link, "link_error": link_error}
 
     def add_issue_assignees(self, project_id: int, issue_iid: int, user_ids: list[int]) -> list[dict]:
         """Adds users to an issue's assignees, keeping the current ones; returns the assignees GitLab now has."""

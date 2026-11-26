@@ -979,6 +979,14 @@ def post_note(fid: int, request: Request, body: NoteIn | None = None, user: User
         missed = [m["username"] for m in team if m["id"] not in kept]
         if missed:  # GitLab leaves out users it can't assign, e.g. without access to the project
             where += "; GitLab didn't assign " + ", ".join(f"@{u}" for u in missed) + " (no access to the project?)"
+    if created:
+        vid = f.vulnerability_gid.rsplit("/", 1)[-1] if f.vulnerability_gid else ""
+        if issue.get("link") == "created":
+            where += f", created from vulnerability #{vid}"
+        elif issue.get("link") == "related":
+            where += f", linked to vulnerability #{vid}"
+        else:
+            where += f"; not linked to a vulnerability: {issue.get('link_error')}"
     _record(f, user, f"analysis posted on {where}", url, db, kind="note", issue_iid=issue["iid"], assigned_to=assign)
     return {"ok": True, "url": url, "where": where, "issue_iid": issue["iid"], "created": created}
 
